@@ -16,7 +16,7 @@ host; durable actors coordinate work and retain state across worker restarts.
 Different actors and tasks can run concurrently. Actor state, message receipts,
 and outgoing work commit atomically. Storage and execution depend on interfaces;
 PostgreSQL handles coordination. Objects can use PostgreSQL (default), RustFS,
-or AWS S3 through the same interface.
+AWS S3, or Cloudflare R2 through the same interface.
 
 ## Quickstart
 
@@ -88,7 +88,7 @@ and linear scaling have not been established by benchmarks.
 [Docker Compose](docs/compose.md) ·
 [Contracts](docs/contracts.md) ·
 [Object storage](docs/object-store.md) ·
-[RustFS and AWS S3](docs/s3.md) ·
+[RustFS, AWS S3, and R2](docs/s3.md) ·
 [Shuffle](docs/shuffle.md) ·
 [Concurrency and recovery](docs/multi-actor.md) ·
 [Coordination and input slices](docs/scaling-and-inputs.md)

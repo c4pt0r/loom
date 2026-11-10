@@ -1,11 +1,14 @@
 use loom_contracts::{Error, ObjectRef, ObjectStore};
 use loom_object_store_s3::S3Config;
 
-/// Run unchanged against RustFS or a disposable AWS S3 bucket.
+/// Run against RustFS, AWS S3, or R2 using LOOM_OBJECT_STORE.
 #[tokio::test]
 #[ignore = "requires LOOM_S3_BUCKET and AWS credentials; optional LOOM_S3_ENDPOINT"]
 async fn s3_contract() {
-    let config = S3Config::from_env(false).unwrap();
+    let config = S3Config::from_provider_env(
+        &std::env::var("LOOM_OBJECT_STORE").unwrap_or_else(|_| "s3".into()),
+    )
+    .unwrap();
     let namespace = format!("s3-contract-{}", uuid::Uuid::new_v4());
     let store = config.connect(&namespace).unwrap();
     let bytes: Vec<u8> = (0..8193).map(|i| (i % 256) as u8).collect();

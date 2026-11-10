@@ -32,7 +32,7 @@ port 15432. It does not alter the existing sorting/word-count stack. Use
 `LOOM_BOOK_PG_PORT` to choose another port and update the DSN accordingly.
 Coordination and objects use PostgreSQL by default; application code depends
 on `Backend` / `ObjectStore` interfaces, not SQL. Submit, worker, and result
-commands also honor the shared [RustFS / AWS S3 configuration](../../docs/s3.md).
+commands also honor the shared [RustFS / AWS S3 / R2 configuration](../../docs/s3.md).
 Use identical storage settings in all processes, including the dashboard.
 
 ### 2. Start a local worker

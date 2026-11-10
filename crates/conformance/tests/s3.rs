@@ -37,7 +37,10 @@ async fn postgres_coordination_with_s3_and_real_wasm() {
     let url = std::env::var("LOOM_TEST_DATABASE_URL").unwrap();
     let ns = format!("object-store-{}", uuid::Uuid::new_v4());
     let control = Arc::new(loom_backend_postgres::connect(&url, &ns).await.unwrap());
-    let config = loom_object_store_s3::S3Config::from_env(false).unwrap();
+    let config = loom_object_store_s3::S3Config::from_provider_env(
+        &std::env::var("LOOM_OBJECT_STORE").unwrap_or_else(|_| "s3".into()),
+    )
+    .unwrap();
     let objects = Arc::new(config.connect(&ns).unwrap());
     let store: Arc<dyn Backend> = Arc::new(Stores::new(control.clone(), objects.clone()));
     let module = store

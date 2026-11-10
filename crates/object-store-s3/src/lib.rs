@@ -1,4 +1,4 @@
-//! Content-addressed, namespace-scoped objects on AWS S3 or RustFS.
+//! Content-addressed, namespace-scoped objects on AWS S3, RustFS, or Cloudflare R2.
 use async_trait::async_trait;
 use loom_contracts::{Bytes, Error, ObjectRef, ObjectStore, Result};
 use object_store::{
@@ -21,19 +21,39 @@ pub struct S3Config {
     pub allow_http: bool,
 }
 impl S3Config {
+    /// Compatibility constructor for AWS S3 (`false`) and RustFS (`true`).
     pub fn from_env(rustfs: bool) -> Result<Self> {
+        Self::from_provider_env(if rustfs { "rustfs" } else { "s3" })
+    }
+    /// Load an S3-compatible provider preset: `s3`, `rustfs`, or `r2`.
+    pub fn from_provider_env(provider: &str) -> Result<Self> {
+        Self::from_values(provider, env)
+    }
+    fn from_values(provider: &str, get: impl Fn(&str) -> Result<Option<String>>) -> Result<Self> {
+        if !matches!(provider, "s3" | "rustfs" | "r2") {
+            return Err(invalid("S3 provider must be s3, rustfs, or r2"));
+        }
         let config = Self {
-            bucket: env("LOOM_S3_BUCKET")?.ok_or_else(|| invalid("set LOOM_S3_BUCKET"))?,
-            region: env("AWS_REGION")?
-                .or(env("AWS_DEFAULT_REGION")?)
-                .unwrap_or_else(|| "us-east-1".into()),
-            endpoint: env("LOOM_S3_ENDPOINT")?,
-            prefix: env("LOOM_S3_PREFIX")?.unwrap_or_else(|| "loom".into()),
-            force_path_style: bool_env("LOOM_S3_FORCE_PATH_STYLE", rustfs)?,
-            allow_http: bool_env("LOOM_S3_ALLOW_HTTP", false)?,
+            bucket: get("LOOM_S3_BUCKET")?.ok_or_else(|| invalid("set LOOM_S3_BUCKET"))?,
+            // R2 requires auto, regardless of AWS configuration on the same host.
+            region: if provider == "r2" {
+                "auto".into()
+            } else {
+                get("AWS_REGION")?
+                    .or(get("AWS_DEFAULT_REGION")?)
+                    .unwrap_or_else(|| "us-east-1".into())
+            },
+            endpoint: get("LOOM_S3_ENDPOINT")?,
+            prefix: get("LOOM_S3_PREFIX")?.unwrap_or_else(|| "loom".into()),
+            force_path_style: bool_value(
+                "LOOM_S3_FORCE_PATH_STYLE",
+                get("LOOM_S3_FORCE_PATH_STYLE")?,
+                provider != "s3",
+            )?,
+            allow_http: bool_value("LOOM_S3_ALLOW_HTTP", get("LOOM_S3_ALLOW_HTTP")?, false)?,
         };
-        if rustfs && config.endpoint.is_none() {
-            return Err(invalid("rustfs requires LOOM_S3_ENDPOINT"));
+        if provider != "s3" && config.endpoint.is_none() {
+            return Err(invalid(&format!("{provider} requires LOOM_S3_ENDPOINT")));
         }
         config.validate()?;
         Ok(config)
@@ -107,9 +127,12 @@ impl S3Config {
 pub fn configured(namespace: &str, default: Arc<dyn ObjectStore>) -> Result<Arc<dyn ObjectStore>> {
     match env("LOOM_OBJECT_STORE")?.as_deref().unwrap_or("postgres") {
         "postgres" => Ok(default),
-        "s3" => Ok(Arc::new(S3Config::from_env(false)?.connect(namespace)?)),
-        "rustfs" => Ok(Arc::new(S3Config::from_env(true)?.connect(namespace)?)),
-        _ => Err(invalid("LOOM_OBJECT_STORE must be postgres, s3, or rustfs")),
+        provider @ ("s3" | "rustfs" | "r2") => Ok(Arc::new(
+            S3Config::from_provider_env(provider)?.connect(namespace)?,
+        )),
+        _ => Err(invalid(
+            "LOOM_OBJECT_STORE must be postgres, s3, rustfs, or r2",
+        )),
     }
 }
 
@@ -256,8 +279,8 @@ fn env(name: &str) -> Result<Option<String>> {
         Err(_) => Err(invalid(&format!("{name} must be UTF-8"))),
     }
 }
-fn bool_env(name: &str, default: bool) -> Result<bool> {
-    env(name)?
+fn bool_value(name: &str, value: Option<String>, default: bool) -> Result<bool> {
+    value
         .map(|v| {
             v.parse()
                 .map_err(|_| invalid(&format!("{name} must be true or false")))
@@ -268,6 +291,116 @@ fn bool_env(name: &str, default: bool) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn config(provider: &str, values: &[(&str, &str)]) -> Result<S3Config> {
+        S3Config::from_values(provider, |name| {
+            Ok(values
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+                .filter(|v| !v.is_empty()))
+        })
+    }
+
+    #[test]
+    fn provider_defaults_and_validation() {
+        let values = [
+            ("LOOM_S3_BUCKET", "loom"),
+            (
+                "LOOM_S3_ENDPOINT",
+                "https://account.eu.r2.cloudflarestorage.com",
+            ),
+            ("AWS_REGION", "us-west-2"),
+            ("LOOM_S3_FORCE_PATH_STYLE", ""),
+        ];
+        let r2 = config("r2", &values).unwrap();
+        assert_eq!(r2.region, "auto");
+        assert!(r2.force_path_style);
+        assert!(!r2.allow_http);
+        assert_eq!(r2.endpoint.as_deref(), Some(values[1].1));
+        let s3 = config("s3", &values).unwrap();
+        assert_eq!(s3.region, "us-west-2");
+        assert!(!s3.force_path_style);
+        assert!(config("rustfs", &values).unwrap().force_path_style);
+        let bucket = [("LOOM_S3_BUCKET", "loom")];
+        assert!(config("r2", &bucket).is_err());
+        assert!(config("rustfs", &bucket).is_err());
+        assert_eq!(config("s3", &bucket).unwrap().region, "us-east-1");
+        assert!(config("unknown", &bucket).is_err());
+        assert!(config("r2", &[]).is_err());
+        let mut values = values.to_vec();
+        values[3].1 = "false";
+        assert!(!config("r2", &values).unwrap().force_path_style);
+        values[3].1 = "invalid";
+        assert!(config("r2", &values).is_err());
+        values[3].1 = "";
+        values[1].1 = "http://localhost:9000";
+        assert!(config("r2", &values).is_err());
+    }
+
+    /// Exercise the actual SDK request, not just the preset's configuration fields.
+    #[tokio::test]
+    async fn r2_signs_with_auto_and_uses_conditional_path_style_put() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 4096];
+            loop {
+                let count = socket.read(&mut buf).await.unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&buf[..count]);
+                if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length: "))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nETag: \"test\"\r\nConnection: close\r\n\r\n").await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let config = config(
+            "r2",
+            &[
+                ("LOOM_S3_BUCKET", "test-bucket"),
+                ("LOOM_S3_ENDPOINT", &endpoint),
+                ("LOOM_S3_ALLOW_HTTP", "true"),
+                ("AWS_REGION", "us-west-2"),
+            ],
+        )
+        .unwrap();
+        let store = config
+            .with_builder(
+                "test",
+                AmazonS3Builder::new()
+                    .with_access_key_id("test-access")
+                    .with_secret_access_key("test-secret"),
+            )
+            .unwrap();
+        let object = store.put(b"hello".to_vec()).await.unwrap();
+        let request = tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(request.starts_with(&format!(
+            "PUT /test-bucket/loom/v1/74657374/{}/{} HTTP/1.1",
+            &object.digest[..2],
+            object.digest
+        )));
+        let lower = request.to_lowercase();
+        assert!(lower.contains("/auto/s3/aws4_request"));
+        assert!(lower.contains("if-none-match: *\r\n"));
+        assert!(request.ends_with("hello"));
+    }
+
     #[test]
     fn empty_credentials_do_not_override_roles() {
         use object_store::aws::AmazonS3ConfigKey;

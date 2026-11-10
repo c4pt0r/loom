@@ -15,7 +15,7 @@ Large or reusable task data should use `Input::Object` and immutable references.
 driver / worker ---- ControlStore ---- PostgreSQL coordination
        |
        +------------ ObjectStore ---- PostgreSQL blobs (default)
-                                      RustFS / AWS S3
+                                      RustFS / AWS S3 / R2
 
 WasmEngine --------- ObjectStore      module loading only
 ```
@@ -78,7 +78,7 @@ let objects = loom_object_store_s3::configured(&namespace, postgres.clone())?;
 let stores = Stores::new(postgres, objects);
 ```
 
-`LOOM_OBJECT_STORE=postgres|rustfs|s3` chooses the adapter. Driver and all
+`LOOM_OBJECT_STORE=postgres|rustfs|s3|r2` chooses the adapter. Driver and all
 workers must be configured with the same logical object store; an `ObjectRef`
 contains a digest, not an endpoint or credentials.
 
@@ -103,9 +103,9 @@ and real Wasm module execution using two worker sessions in one process. Tests
 also verify that modules, input/output bytes, and shuffle blocks do not leak into
 the coordination adapter's own blob storage.
 
-`loom-object-store-s3` implements AWS S3 and RustFS with SHA-256 keys,
+`loom-object-store-s3` implements AWS S3, RustFS, and R2 with SHA-256 keys,
 conditional creation, HEAD metadata, and native range reads. See the
-[RustFS and AWS S3 guide](s3.md) for configuration, deployment, and tests.
+[RustFS, AWS S3, and R2 guide](s3.md) for configuration, deployment, and tests.
 Shared filesystems, multipart uploads, and streaming APIs are not implemented.
 
 ## Publication and cleanup
@@ -125,6 +125,6 @@ See [verification coverage](object-store-verification.md).
 ## Range reads
 
 `ObjectStore::get_range(object, offset, length)` supports exact byte-range inputs.
-Its default fallback preserves existing adapters; PostgreSQL, RustFS/S3, and the object-only
+Its default fallback preserves existing adapters; PostgreSQL, RustFS/S3/R2, and the object-only
 memory adapter override it. `Input::Object` remains a complete-object read. See
 [object slices](scaling-and-inputs.md) for examples, encoding rules, and limits.
