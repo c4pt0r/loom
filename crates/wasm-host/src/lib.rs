@@ -21,7 +21,7 @@ struct Host {
 /// Fresh isolated instance per turn; compiled components are cached by immutable digest.
 pub struct WasmEngine {
     engine: Engine,
-    backend: Arc<dyn Backend>,
+    objects: Arc<dyn ObjectStore>,
     cache: Arc<Mutex<HashMap<String, Component>>>,
     fuel: u64,
     memory_bytes: usize,
@@ -30,12 +30,12 @@ fn invalid(e: impl std::fmt::Display) -> Error {
     Error::Invalid(format!("{e:#}"))
 }
 impl WasmEngine {
-    pub fn new(backend: Arc<dyn Backend>) -> Result<Self> {
+    pub fn new(objects: Arc<dyn ObjectStore>) -> Result<Self> {
         let mut config = Config::new();
         config.wasm_component_model(true).consume_fuel(true);
         Ok(Self {
             engine: Engine::new(&config).map_err(invalid)?,
-            backend,
+            objects,
             cache: Arc::default(),
             fuel: 20_000_000,
             memory_bytes: 32 * 1024 * 1024,
@@ -54,7 +54,7 @@ impl WasmEngine {
         }
         let cached = self.cache.lock().unwrap().get(&module.digest).cloned();
         let bytes = if cached.is_none() {
-            Some(self.backend.get(module).await?)
+            Some(self.objects.get(module).await?)
         } else {
             None
         };

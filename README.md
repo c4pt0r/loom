@@ -10,7 +10,7 @@ machine that fans out analysis, aggregates results, waits for approval, and resu
 after restart.
 
 Examples: [Sorting](#quickstart-distributed-sorting-with-rust-and-loom) ·
-[Word count](#quickstart-distributed-word-count) · [Shuffle protocol](docs/shuffle.md)
+[Word count](#quickstart-distributed-word-count) · [Shuffle protocol](docs/shuffle.md) · [Object storage](docs/object-store.md)
 
 ## Quickstart: distributed sorting with Rust and Loom
 
@@ -346,7 +346,10 @@ async fn distributed_sort(
 `main` selects the concrete adapter:
 
 ```rust
-let store = loom_backend_postgres::connect(&args.database_url, &args.namespace).await?;
+let postgres = Arc::new(
+    loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
+);
+let store = Stores::new(postgres.clone(), postgres);
 ```
 
 Replacing that adapter does not require changing the sorting algorithm. Clients
@@ -779,6 +782,22 @@ There are no suspended durable Rust futures and no Wasm heap snapshots.
 See [the Rust guest](examples/research-agent/src/lib.rs),
 [SDK](crates/guest-sdk/src/lib.rs), and [WIT boundary](wit/guest.wit).
 
+## Object storage
+
+Task coordination and payload storage are independently injectable. `ControlStore`
+keeps task state, leases, fencing, and membership together. `ObjectStore` holds
+Wasm components, task data, shuffle blocks, and results through `put` / `get`.
+
+```rust
+let backend = Stores::new(control, objects);
+```
+
+The CLI and examples currently pass the PostgreSQL adapter for both roles. Another
+object provider can replace the second argument without changing task or shuffle
+logic. `WasmEngine` needs only the object interface. Task objects must remain
+readable through retries and downstream consumption; there is no automatic TTL or
+cleanup yet. See [object-store contracts and assembly](docs/object-store.md).
+
 ## Architecture
 
 ```text
@@ -792,7 +811,8 @@ Wasmtime host ─── runtime orchestration
         memory adapter / PostgreSQL reference adapter
 ```
 
-- `contracts`: persistence, membership, blob storage and guest-engine interfaces.
+- `contracts`: execution, membership, object storage, guest-engine interfaces, and `Stores` composition.
+- `object-store-memory`: independent object-only adapter for tests and single-process development.
 - `runtime`: claim → execute → publish object → commit; block-by-block shuffle reduction. No DB or Wasmtime dependency.
 - `shuffle`: deterministic key partitioning, immutable blocks, manifests, and validation.
 - `wasm-host`: component cache; fresh isolated instance per turn; fuel and memory limits.

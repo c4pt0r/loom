@@ -81,3 +81,11 @@ IDs. A worker folds only its assigned partition, with one block plus accumulator
 per invocation. See [shuffle.md](shuffle.md) for the protocol, validation, retry
 semantics, and bounded resource limits. No Flow or database-specific application
 interface is introduced.
+
+## Separate object storage
+
+`ObjectStore` owns immutable payload bytes. `ControlStore` combines membership and
+execution metadata in one fencing domain. `Stores::new(control, objects)` composes
+independent providers as the existing `Backend` facade. The CLI defaults both to
+PostgreSQL; Wasm module loading now needs only `ObjectStore`. See
+[object-store.md](object-store.md) for visibility, retention, and injection rules.

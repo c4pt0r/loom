@@ -657,7 +657,7 @@ impl<D: Driver> ExecutionStore for Store<D> {
     }
 }
 #[async_trait]
-impl<D: Driver> BlobStore for Store<D> {
+impl<D: Driver> ObjectStore for Store<D> {
     async fn put(&self, b: Bytes) -> Result<ObjectRef> {
         self.0.put_blob(b).await
     }

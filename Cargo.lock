@@ -814,6 +814,7 @@ dependencies = [
  "loom-backend-memory",
  "loom-backend-postgres",
  "loom-contracts",
+ "loom-object-store-memory",
  "loom-runtime",
  "loom-shuffle",
  "loom-wasm-host",
@@ -855,6 +856,15 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "loom-object-store-memory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "loom-contracts",
+ "sha2 0.10.9",
 ]
 
 [[package]]

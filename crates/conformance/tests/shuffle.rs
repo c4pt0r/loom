@@ -461,7 +461,7 @@ struct FailingPublication {
     writes: AtomicUsize,
 }
 #[async_trait]
-impl BlobStore for FailingPublication {
+impl ObjectStore for FailingPublication {
     async fn put(&self, bytes: Bytes) -> Result<ObjectRef> {
         if self.writes.fetch_add(1, Ordering::SeqCst) == 1 {
             return Err(Error::Unavailable(

@@ -300,14 +300,28 @@ pub trait ExecutionStore: Send + Sync {
     async fn receipt(&self, job: &str) -> Result<Option<Receipt>>;
 }
 
+/// Namespace-scoped immutable object storage, independently injectable from coordination.
+/// `put` returns the SHA-256 digest of the bytes and is idempotent for identical bytes.
+/// A successful put must be readable by all workers using this logical object store.
+/// Referenced data must outlive retries and dependent tasks; no TTL/GC is implied.
 #[async_trait]
-pub trait BlobStore: Send + Sync {
+pub trait ObjectStore: Send + Sync {
     async fn put(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get(&self, object: &ObjectRef) -> Result<Bytes>;
 }
 
-pub trait Backend: Membership + ExecutionStore + BlobStore {}
-impl<T: Membership + ExecutionStore + BlobStore> Backend for T {}
+/// Compatibility name for callers of the original prototype API.
+pub use ObjectStore as BlobStore;
+
+/// Membership and task commits must share one fencing/consistency domain.
+pub trait ControlStore: Membership + ExecutionStore {}
+impl<T: Membership + ExecutionStore + ?Sized> ControlStore for T {}
+
+pub trait Backend: ControlStore + ObjectStore {}
+impl<T: ControlStore + ObjectStore + ?Sized> Backend for T {}
+
+mod stores;
+pub use stores::Stores;
 
 #[async_trait]
 pub trait GuestEngine: Send + Sync {

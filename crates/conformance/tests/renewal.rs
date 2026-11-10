@@ -58,7 +58,7 @@ impl ExecutionStore for SlowConnection {
     }
 }
 #[async_trait]
-impl BlobStore for SlowConnection {
+impl ObjectStore for SlowConnection {
     async fn put(&self, b: Bytes) -> Result<ObjectRef> {
         let _connection = self.connection.lock().await;
         tokio::time::sleep(Duration::from_millis(150)).await;

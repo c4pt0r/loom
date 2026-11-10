@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
 use loom_contracts::{
-    Backend, BlobStore, Input, MAX_SHUFFLE_SOURCES, ObjectRef, PartitionedDataset, ShuffleLayout,
+    Backend, Input, MAX_SHUFFLE_SOURCES, ObjectRef, ObjectStore, PartitionedDataset, ShuffleLayout,
     ShuffleSource, TaskOutcome, TaskOutput, TaskSpec,
 };
 use std::{collections::BTreeMap, io::Read, path::PathBuf, time::Duration};
@@ -183,7 +183,10 @@ async fn main() -> Result<()> {
     let layout = ShuffleLayout {
         partitions: args.reducers,
     };
-    let store = loom_backend_postgres::connect(&args.database_url, &args.namespace).await?;
+    let postgres = std::sync::Arc::new(
+        loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
+    );
+    let store = loom_contracts::Stores::new(postgres.clone(), postgres);
     let module = store.put(std::fs::read(&args.component)?).await?;
     let run = format!("word-count-{}", uuid::Uuid::new_v4());
     let (dataset, maps, reducers) = tokio::time::timeout(

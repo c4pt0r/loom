@@ -126,8 +126,9 @@ async fn main() -> Result<()> {
     let url = cli
         .database_url
         .context("set LOOM_DATABASE_URL or --database-url (demo uses memory)")?;
-    let backend: Arc<dyn Backend> =
-        Arc::new(loom_backend_postgres::connect(&url, &cli.namespace).await?);
+    let postgres = Arc::new(loom_backend_postgres::connect(&url, &cli.namespace).await?);
+    // Default adapters share Postgres; an independent ObjectStore can be supplied here.
+    let backend: Arc<dyn Backend> = Arc::new(Stores::new(postgres.clone(), postgres));
     match cli.command {
         Command::Node { id, lease_ms } => {
             anyhow::ensure!(lease_ms >= 1000, "node lease must be at least 1000 ms");

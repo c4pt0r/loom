@@ -35,7 +35,7 @@ pub fn partition_for(key: &[u8], layout: &ShuffleLayout) -> Result<u32> {
 /// Publish blocks first, then their manifest. Only the later fenced task commit
 /// makes this manifest discoverable through a task dependency.
 pub async fn publish(
-    store: &dyn BlobStore,
+    store: &dyn ObjectStore,
     layout: &ShuffleLayout,
     output: &[u8],
 ) -> Result<ObjectRef> {
@@ -79,7 +79,7 @@ pub async fn publish(
     }
     store.put(encode(&manifest)?).await
 }
-async fn write_block(store: &dyn BlobStore, bytes: Bytes, records: u32) -> Result<ShuffleBlock> {
+async fn write_block(store: &dyn ObjectStore, bytes: Bytes, records: u32) -> Result<ShuffleBlock> {
     let length = bytes.len() as u32;
     Ok(ShuffleBlock {
         object: store.put(bytes).await?,
@@ -110,7 +110,7 @@ pub fn validate_manifest(manifest: &ShuffleManifest, expected: &ShuffleLayout) -
 
 /// Validate only the selected partition's data; never fetch another partition's blocks.
 pub async fn read_block(
-    store: &dyn BlobStore,
+    store: &dyn ObjectStore,
     block: &ShuffleBlock,
     layout: &ShuffleLayout,
     partition: u32,

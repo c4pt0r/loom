@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use loom_contracts::{Backend, BlobStore, Input, ObjectRef, TaskOutcome, TaskSpec};
+use loom_contracts::{Backend, Input, ObjectRef, ObjectStore, TaskOutcome, TaskSpec};
 use std::{cmp::Reverse, collections::BinaryHeap, io::Read, path::PathBuf, time::Duration};
 
 #[derive(Parser)]
@@ -116,7 +116,10 @@ async fn main() -> Result<()> {
             .collect()
     };
     // This is the composition root: replace the adapter here, not the algorithm.
-    let store = loom_backend_postgres::connect(&args.database_url, &args.namespace).await?;
+    let postgres = std::sync::Arc::new(
+        loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
+    );
+    let store = loom_contracts::Stores::new(postgres.clone(), postgres);
     let module = store.put(std::fs::read(&args.component)?).await?;
     let run = format!("sort-{}", uuid::Uuid::new_v4());
     let (sorted, tasks) = tokio::time::timeout(

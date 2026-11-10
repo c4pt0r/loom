@@ -332,7 +332,10 @@ async fn distributed_sort(
 `main` selects the concrete adapter:
 
 ```rust
-let store = loom_backend_postgres::connect(&args.database_url, &args.namespace).await?;
+let postgres = Arc::new(
+    loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
+);
+let store = Stores::new(postgres.clone(), postgres);
 ```
 
 Replacing that adapter does not require changing the sorting algorithm. Clients

@@ -16,7 +16,7 @@ reducer 2 reads A2 B2 -> output partition 2
 ```
 
 Each mapper reads only its assigned input. The native host partitions that mapper's
-output records and publishes immutable blocks through `BlobStore`. A reducer's host
+output records and publishes immutable blocks through `ObjectStore`. A reducer's host
 reads manifest metadata from all its sources, but fetches data blocks only for its
 own partition. It folds one block at a time through Wasm. Drivers submit task
 specifications and track outcomes; intermediate data never needs to pass through
