@@ -9,6 +9,7 @@
 | `node-b` | Rust host, one execution slot, node ID `node-b` | yes |
 | `cli` | One-shot CLI, bundled Wasm component | `tools` profile |
 | `sort` | Rust distributed-sort client and bundled sorting Wasm | `tools` profile |
+| `word-count` | Rust word-count driver and bundled counting Wasm | `tools` profile |
 | `tests` | Linux Rust test binaries, PostgreSQL/Wasm integration, demo | `tests` profile |
 | `control` | Persistent CLI runner for acceptance tests | `tests` profile, harness only |
 | `claim-fixture` | Deterministically hold a lease before SIGKILL | `tests` profile, harness only |

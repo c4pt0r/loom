@@ -889,6 +889,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-word-count"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "loom-backend-postgres",
+ "loom-contracts",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "loom-word-count-tasks"
+version = "0.1.0"
+dependencies = [
+ "loom-guest-sdk",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

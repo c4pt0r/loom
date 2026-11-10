@@ -69,6 +69,15 @@ services:
       <<: *backend
       LOOM_NAMESPACE: "${LOOM_NAMESPACE:-lab}"
 
+  word-count:
+    <<: *node
+    profiles: [tools]
+    entrypoint: [/usr/local/bin/loom-word-count]
+    command: []
+    environment:
+      <<: *backend
+      LOOM_NAMESPACE: "${LOOM_NAMESPACE:-lab}"
+
   # Helpers are only started by the acceptance harness, never by normal `up`.
   control:
     <<: *node

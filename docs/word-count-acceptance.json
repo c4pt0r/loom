@@ -1,0 +1,68 @@
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "case": "default",
+      "total_words": 16000,
+      "task_count": 16,
+      "run": "word-count-9108c37e-47fd-4c66-930c-64642656fff8",
+      "output": "67def30fb16b3e4ebfc0e2b8c75e56e18d3d06a312e93de5363b691e79789673",
+      "workers": [
+        "node-a",
+        "node-b"
+      ]
+    },
+    {
+      "case": "custom",
+      "total_words": 5,
+      "task_count": 3,
+      "run": "word-count-2872a86d-8950-4616-8fa9-ab6c1d6f308b",
+      "output": "81e270e79fce484ef4cdcd8020e2893adccf2981499f7f64c6411dfdc79e3cb5"
+    },
+    {
+      "case": "empty",
+      "total_words": 0,
+      "task_count": 0,
+      "run": "word-count-7256382a-02d8-4647-a3fc-8bfc797127b1",
+      "output": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "case": "whitespace",
+      "total_words": 0,
+      "task_count": 0,
+      "run": "word-count-acd001d7-4b88-4926-aff8-9b685045bc7b",
+      "output": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "case": "case and punctuation",
+      "total_words": 6,
+      "task_count": 3,
+      "run": "word-count-3127e0b8-026e-4020-8de8-7e1490958439",
+      "output": "18d3c79a387056ab21d5d93cbe7cad571f5cb568180e7894c2ac28b18d1568db"
+    },
+    {
+      "case": "Unicode whitespace and tokens",
+      "total_words": 7,
+      "task_count": 4,
+      "run": "word-count-ae786826-2111-4fde-9564-7bdba9062a3b",
+      "output": "bd9166bd23a2fcbb825272e285f50a3750c2b8e58af08b3ad2101903d215d70b"
+    },
+    {
+      "case": "cross-chunk counts",
+      "total_words": 148,
+      "task_count": 22,
+      "run": "word-count-df8f520f-c034-49ee-a9c2-b2ef832094b3",
+      "output": "14d353a066cd7d45e2d6461f31d77804c6f11c8eeb4f3fc5f8e3eb2b9076ec97"
+    },
+    {
+      "case": "byte-limited chunks",
+      "total_words": 12,
+      "task_count": 3,
+      "run": "word-count-efdef3d2-53d6-4f3a-825a-000aaa952cd6",
+      "output": "7f05dfe24aa1cd6f767fbb1d70549347beed13ce61074e807bb2fd88cd65c2f3"
+    },
+    {
+      "case": "oversized words, invalid chunk sizes, and invalid UTF-8 rejected"
+    }
+  ]
+}

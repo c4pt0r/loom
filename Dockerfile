@@ -10,10 +10,12 @@ COPY scripts ./scripts
 # Build inside Linux; do not copy the host's macOS binaries or target directory.
 ARG CARGO_BUILD_JOBS=6
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
-RUN cargo build --locked --release -p loom-cli -p loom-conformance -p loom-sort-client --bin loom --bin hold-claim --bin loom-sort-client
+RUN cargo build --locked --release -p loom-cli -p loom-conformance -p loom-sort-client --bin loom --bin hold-claim --bin loom-sort-client -p loom-word-count --bin loom-word-count
 RUN target/release/loom build
 RUN cargo build --locked --release -p loom-example-sort --target wasm32-unknown-unknown \
     && target/release/loom component target/wasm32-unknown-unknown/release/loom_example_sort.wasm target/sort.component.wasm
+RUN cargo build --locked --release -p loom-word-count-tasks --target wasm32-unknown-unknown \
+    && target/release/loom component target/wasm32-unknown-unknown/release/loom_word_count_tasks.wasm target/word-count.component.wasm
 RUN cargo test --locked --release --workspace --no-run
 
 FROM build AS tests
@@ -26,6 +28,8 @@ COPY --from=build /build/target/release/hold-claim /usr/local/bin/hold-claim
 COPY --from=build /build/target/release/loom-sort-client /usr/local/bin/loom-sort-client
 COPY --from=build /build/target/research-agent.component.wasm /opt/loom/research-agent.component.wasm
 COPY --from=build /build/target/sort.component.wasm /opt/loom/sort.component.wasm
+COPY --from=build /build/target/release/loom-word-count /usr/local/bin/loom-word-count
+COPY --from=build /build/target/word-count.component.wasm /opt/loom/word-count.component.wasm
 USER 10001:10001
 WORKDIR /opt/loom
 ENTRYPOINT ["/usr/local/bin/loom"]
