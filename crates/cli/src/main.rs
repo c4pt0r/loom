@@ -27,12 +27,14 @@ enum Command {
     Demo {
         component: PathBuf,
     },
-    /// Register and poll a shared durable backend. One work slot per node.
+    /// Register and poll a shared durable backend with bounded execution slots.
     Node {
         #[arg(long)]
         id: String,
         #[arg(long, default_value_t = 5000)]
         lease_ms: u64,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=256))]
+        slots: u16,
     },
     Deploy {
         component: PathBuf,
@@ -134,7 +136,11 @@ async fn main() -> Result<()> {
     // Default adapters share Postgres; an independent ObjectStore can be supplied here.
     let backend: Arc<dyn Backend> = Arc::new(Stores::new(postgres.clone(), postgres));
     match cli.command {
-        Command::Node { id, lease_ms } => {
+        Command::Node {
+            id,
+            lease_ms,
+            slots,
+        } => {
             anyhow::ensure!(lease_ms >= 1000, "node lease must be at least 1000 ms");
             let engine = Arc::new(loom_wasm_host::WasmEngine::new(backend.clone())?);
             let node = Node {
@@ -144,7 +150,8 @@ async fn main() -> Result<()> {
                 lease_ms,
             };
             eprintln!("NODE {} {}", node.session.node, node.session.incarnation);
-            node.run(async {
+            eprintln!("SLOTS {slots}");
+            node.run_with_slots(usize::from(slots), async {
                 let _ = tokio::signal::ctrl_c().await;
             })
             .await?;

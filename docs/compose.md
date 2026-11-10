@@ -5,8 +5,8 @@
 | Service | Purpose | Started by default |
 | --- | --- | --- |
 | `postgres` | PostgreSQL 17; named persistent data volume | yes |
-| `node-a` | Rust host, one execution slot, node ID `node-a` | yes |
-| `node-b` | Rust host, one execution slot, node ID `node-b` | yes |
+| `node-a` | Rust host, one slot by default, node ID `node-a` | yes |
+| `node-b` | Rust host, one slot by default, node ID `node-b` | yes |
 | `cli` | One-shot CLI, bundled Wasm component | `tools` profile |
 | `sort` | Rust distributed-sort client and bundled sorting Wasm | `tools` profile |
 | `word-count` | Rust word-count driver and bundled counting Wasm | `tools` profile |
@@ -132,3 +132,10 @@ docker compose down
 This removes the development containers/network and retains its PostgreSQL volume.
 `docker compose down --volumes` also deletes that project's data; use only when
 intentionally resetting the development cluster.
+
+## Multiple execution slots
+
+Set `LOOM_SLOTS=4` when starting or recreating workers to enable four slots per
+node. Tasks and actor turns share those slots; each actor remains single-writer.
+See [concurrent actors](multi-actor.md) for restart commands, shutdown behavior,
+and the independent multi-actor acceptance harness.

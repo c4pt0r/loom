@@ -2,6 +2,7 @@
 use loom_contracts::*;
 use std::{sync::Arc, time::Duration};
 
+#[derive(Clone)]
 pub struct Node {
     pub store: Arc<dyn Backend>,
     pub engine: Arc<dyn GuestEngine>,
@@ -168,43 +169,102 @@ impl Node {
         }
         Ok(true)
     }
-    /// Heartbeats run independently of Wasm execution. On failure stop dispatching;
-    /// a bounded in-flight guest may finish, but commits still require a valid lease.
+    /// Compatibility entry point with one execution slot.
     pub async fn run(&self, shutdown: impl std::future::Future<Output = ()>) -> Result<()> {
+        self.run_with_slots(1, shutdown).await
+    }
+
+    /// Slots share one node session and heartbeat. Each claim renews independently.
+    /// Dropping this future aborts all polling/heartbeat tasks; leases then expire.
+    pub async fn run_with_slots(
+        &self,
+        slots: usize,
+        shutdown: impl std::future::Future<Output = ()>,
+    ) -> Result<()> {
+        if !(1..=256).contains(&slots) {
+            return Err(Error::Invalid("node slots must be 1..256".into()));
+        }
         self.register().await?;
-        let store = self.store.clone();
-        let session = self.session.clone();
-        let ttl = self.lease_ms;
-        let (lost_tx, mut lost_rx) = tokio::sync::oneshot::channel();
-        let heartbeat = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_millis((ttl / 3).max(1))).await;
-                if let Err(e) = store.renew(&session, ttl).await {
-                    let _ = lost_tx.send(e);
-                    break;
+        enum Event {
+            Heartbeat(Result<()>),
+            Slot(Result<()>),
+            Drained(Result<()>),
+        }
+        // JoinSet owns every spawned task, including the heartbeat, so cancellation
+        // cannot leave an orphan heartbeat keeping abandoned claims alive forever.
+        let mut workers = tokio::task::JoinSet::new();
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let node = self.clone();
+        workers.spawn(async move {
+            let result = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis((node.lease_ms / 3).max(1))).await;
+                    node.store.renew(&node.session, node.lease_ms).await?;
                 }
+                #[allow(unreachable_code)]
+                Ok(())
             }
+            .await;
+            Event::Heartbeat(result)
         });
+        for _ in 0..slots {
+            let node = self.clone();
+            let stopped = stopped.clone();
+            workers.spawn(async move { Event::Slot(node.run_slot(stopped).await) });
+        }
         tokio::pin!(shutdown);
+        let mut draining = false;
+        let mut remaining = slots;
         let result = loop {
-            let tick = self.tick();
-            tokio::pin!(tick);
             tokio::select! {
-                _ = &mut shutdown => {
-                    let (drained, finished) = tokio::join!(self.store.drain(&self.session), &mut tick);
-                    break drained.and(finished.map(|_| ()));
+                _ = &mut shutdown, if !draining => {
+                    draining = true;
+                    let node = self.clone();
+                    // Keep observing heartbeats and slot errors while drain waits for storage.
+                    workers.spawn(async move {
+                        Event::Drained(node.store.drain(&node.session).await)
+                    });
                 }
-                lost = &mut lost_rx => { break Err(lost.unwrap_or(Error::Fenced)); }
-                result = &mut tick => {
-                    match result {
-                        Ok(false) => tokio::time::sleep(Duration::from_millis(50)).await,
-                        Ok(true) => (),
-                        Err(e) => break Err(e),
+                event = workers.join_next() => {
+                    match event {
+                        Some(Ok(Event::Drained(Ok(())))) => { let _ = stop.send(true); }
+                        Some(Ok(Event::Slot(Ok(())))) => {
+                            remaining -= 1;
+                            if remaining == 0 { break Ok(()); }
+                        }
+                        Some(Ok(Event::Slot(Err(error)) | Event::Drained(Err(error)) | Event::Heartbeat(Err(error)))) => break Err(error),
+                        Some(Err(error)) => break Err(Error::Unavailable(format!("node worker failed: {error}"))),
+                        _ => break Err(Error::Unavailable("node heartbeat ended unexpectedly".into())),
                     }
                 }
             }
         };
-        heartbeat.abort();
+        workers.abort_all();
+        while workers.join_next().await.is_some() {}
         result
+    }
+
+    async fn run_slot(&self, mut stopped: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+        while !*stopped.borrow() {
+            let tick = self.tick();
+            tokio::pin!(tick);
+            let worked = tokio::select! {
+                biased;
+                _ = stopped.changed() => {
+                    // Drain has committed: finish any concurrent claim/execution, but
+                    // never drop a claim response whose outcome is still in flight.
+                    tick.await?;
+                    return Ok(());
+                }
+                result = &mut tick => result?,
+            };
+            if !worked {
+                tokio::select! {
+                    _ = stopped.changed() => return Ok(()),
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => (),
+                }
+            }
+        }
+        Ok(())
     }
 }

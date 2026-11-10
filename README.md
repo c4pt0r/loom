@@ -859,7 +859,10 @@ and modules remain stored as `bytea`; S3 and retention cleanup are not implement
 See [coordination migration and range-input limits](docs/scaling-and-inputs.md).
 The memory adapter is intentionally not durable across process exits.
 
-Nodes share work through storage polling, with one execution slot per process.
+Nodes share work through storage polling. `loom node --slots 4` enables four
+concurrent task/actor slots; the default remains one. Different actors may run
+concurrently, while each actor processes one message turn at a time. See
+[multi-actor execution and shutdown](docs/multi-actor.md).
 There is no peer RPC, placement scheduler, GPU support, tenant authentication,
 membership watch stream, worker autoscaling or distributed channel yet.
 The backend interfaces are designed to allow different implementations, but
@@ -892,4 +895,5 @@ not replayed, and that an actor resumes after all its workers were killed while
 waiting for approval. The fixture binary is not part of the production CLI.
 
 See [contract details](docs/contracts.md), [current coordination and input verification](docs/scaling-verification.md),
-and the [initial verification record](docs/verification.md).
+[multi-actor concurrency checks](docs/multi-actor.md), and the
+[initial verification record](docs/verification.md).

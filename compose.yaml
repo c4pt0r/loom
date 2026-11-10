@@ -36,11 +36,11 @@ services:
 
   node-a:
     <<: *node
-    command: [--namespace, "${LOOM_NAMESPACE:-lab}", node, --id, node-a, --lease-ms, "5000"]
+    command: [--namespace, "${LOOM_NAMESPACE:-lab}", node, --id, node-a, --lease-ms, "5000", --slots, "${LOOM_SLOTS:-1}"]
 
   node-b:
     <<: *node
-    command: [--namespace, "${LOOM_NAMESPACE:-lab}", node, --id, node-b, --lease-ms, "5000"]
+    command: [--namespace, "${LOOM_NAMESPACE:-lab}", node, --id, node-b, --lease-ms, "5000", --slots, "${LOOM_SLOTS:-1}"]
 
   cli:
     <<: *node
