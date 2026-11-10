@@ -1,0 +1,47 @@
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "case": "default",
+      "count": 16000,
+      "task_count": 16,
+      "run": "sort-01eb582f-4441-4dee-ac28-02f779b3e9a7",
+      "output": "91426e029c6a9d2f0fc1954d0ecb5518295f548673fbf481779a2da21d313bd7",
+      "workers": [
+        "node-a",
+        "node-b"
+      ]
+    },
+    {
+      "case": "custom",
+      "count": 8,
+      "task_count": 3,
+      "run": "sort-10f64f9d-bc1f-455a-8e74-d9de2f554ff4",
+      "output": "1cd44e77ec7315f5b3502518cc766ac4e4abe33fbb159d3e1febee96dc02067d"
+    },
+    {
+      "case": "empty",
+      "count": 0,
+      "task_count": 0,
+      "run": "sort-fe13840b-fa0e-4b46-913e-6cd74ff77d31",
+      "output": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "case": "duplicates",
+      "count": 11,
+      "task_count": 4,
+      "run": "sort-750724f9-fe7b-43eb-b9dd-f7646ed81b57",
+      "output": "8bfdf02f6a322ca73a22c72fbd13fddab2c786d4b928f16e2d10c88d941fc2ca"
+    },
+    {
+      "case": "integer boundaries",
+      "count": 6,
+      "task_count": 3,
+      "run": "sort-131bcb1e-1fa5-4fb2-97d5-48cb38e40c8d",
+      "output": "e6d97069e846c38f1ef714e9eb56ed5763d054ad4a5acf318b2c720db28de52a"
+    },
+    {
+      "case": "invalid floats and out-of-range integers rejected"
+    }
+  ]
+}

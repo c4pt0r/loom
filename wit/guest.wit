@@ -1,0 +1,7 @@
+package loom:guest@0.1.0;
+
+world guest {
+    // Payloads are versioned JSON in this first ABI. No ambient host imports.
+    export task: func(name: string, input: list<u8>) -> result<list<u8>, string>;
+    export handle: func(name: string, state: list<u8>, message: list<u8>) -> result<list<u8>, string>;
+}

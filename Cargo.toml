@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "examples/research-agent", "examples/sort-guest", "examples/sort-client"]
+default-members = ["crates/cli", "crates/conformance"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.93"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = "0.7"
+uuid = { version = "1", features = ["v4"] }
+wasmtime = { version = "45.0.1", default-features = false, features = ["std", "runtime", "cranelift", "component-model"] }
+wit-bindgen = "0.63"
+wit-component = "0.263"
+loom-contracts = { path = "crates/contracts" }
+loom-backend-core = { path = "crates/backend-core" }
+loom-backend-memory = { path = "crates/backend-memory" }
+loom-backend-postgres = { path = "crates/backend-postgres" }
+loom-runtime = { path = "crates/runtime" }
+loom-wasm-host = { path = "crates/wasm-host" }
+loom-guest-sdk = { path = "crates/guest-sdk" }
+
+[profile.release]
+lto = "thin"

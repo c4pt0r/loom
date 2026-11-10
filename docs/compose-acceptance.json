@@ -1,0 +1,58 @@
+{
+  "project": "loom-test-9c2b05c0b185",
+  "namespace": "acceptance-9c2b05c0b185",
+  "checks": [
+    "PostgreSQL healthy; isolated network and persistent volume created",
+    "SIGKILL container takeover: uncommitted task retried; committed task not replayed",
+    "Two worker containers execute Wasm tasks and aggregate eight immutable results",
+    "Actor survives loss of both workers; duplicate approval commits only once",
+    "Database container recreation retains Actor state, receipts, modules and result blobs",
+    "Wasm fuel exhaustion is contained; workers continue processing tasks"
+  ],
+  "status": "PASS",
+  "module_digest": "421c999bd2d79169f6095e4cb53fb17992378ac2d6456fb320714bd487b27982",
+  "workers": [
+    {
+      "session": {
+        "node": "node-a",
+        "incarnation": "ab149fbf-344c-4dc3-a413-72a2f45fa370"
+      },
+      "lease_until": 1794277082064,
+      "draining": false
+    },
+    {
+      "session": {
+        "node": "node-b",
+        "incarnation": "2fb75964-e52f-4a16-b816-e7f832c3df4e"
+      },
+      "lease_until": 1794277082012,
+      "draining": false
+    }
+  ],
+  "services": [
+    {
+      "Service": "control",
+      "State": "running",
+      "Health": "",
+      "Image": "loom-local:dev"
+    },
+    {
+      "Service": "node-a",
+      "State": "running",
+      "Health": "",
+      "Image": "loom-local:dev"
+    },
+    {
+      "Service": "node-b",
+      "State": "running",
+      "Health": "",
+      "Image": "loom-local:dev"
+    },
+    {
+      "Service": "postgres",
+      "State": "running",
+      "Health": "healthy",
+      "Image": "postgres:17-bookworm"
+    }
+  ]
+}
