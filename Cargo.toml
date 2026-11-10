@@ -24,6 +24,7 @@ wasmtime = { version = "45.0.1", default-features = false, features = ["std", "r
 wit-bindgen = "0.63"
 wit-component = "0.263"
 loom-contracts = { path = "crates/contracts" }
+loom-dashboard = { path = "crates/dashboard" }
 loom-backend-core = { path = "crates/backend-core" }
 loom-backend-memory = { path = "crates/backend-memory" }
 loom-backend-postgres = { path = "crates/backend-postgres" }

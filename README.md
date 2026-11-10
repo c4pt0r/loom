@@ -37,6 +37,17 @@ Sorting verifies its result against a local reference sort. Word count runs
 partitioned map/reduce using hash shuffle. Worker concurrency is configurable
 with `loom node --slots N` (default: 1).
 
+## Dashboard
+
+Inspect nodes, task status, failures, actor state, and results at **http://127.0.0.1:8787**:
+
+```sh
+dc --profile dashboard build dashboard
+dc --profile dashboard up -d --wait --no-recreate postgres dashboard
+```
+
+See the [dashboard guide](docs/dashboard.md) for native startup and the local Pi example.
+
 ## Examples
 
 Each guide includes setup, Rust code explanations, and recovery behavior.

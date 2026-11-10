@@ -10,6 +10,7 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, NoTls, Transaction};
 
+mod inspection;
 mod schema;
 pub struct PostgresDriver {
     clients: Vec<Mutex<Client>>,
@@ -455,6 +456,20 @@ impl Driver for PostgresDriver {
             return Err(Error::Invalid("blob integrity failure".into()));
         }
         Ok(bytes)
+    }
+    async fn blob_size(&self, object: &ObjectRef) -> Result<u64> {
+        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.clients.len();
+        let row = self.clients[index]
+            .lock()
+            .await
+            .query_opt(
+                "SELECT octet_length(body) FROM loom_blobs WHERE namespace=$1 AND digest=$2",
+                &[&self.namespace, &object.digest],
+            )
+            .await
+            .map_err(db)?
+            .ok_or_else(|| Error::NotFound(object.digest.clone()))?;
+        Ok(row.get::<_, i32>(0) as u64)
     }
     async fn get_blob_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
         let end = offset

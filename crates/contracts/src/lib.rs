@@ -362,6 +362,10 @@ pub trait ExecutionStore: Send + Sync {
 pub trait ObjectStore: Send + Sync {
     async fn put(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get(&self, object: &ObjectRef) -> Result<Bytes>;
+    /// Object length without downloading content when the provider supports metadata reads.
+    async fn size(&self, object: &ObjectRef) -> Result<u64> {
+        Ok(self.get(object).await?.len() as u64)
+    }
     /// Compatibility fallback for existing adapters; providers should override with native range IO.
     async fn get_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
         slice_bytes(&self.get(object).await?, offset, length)
@@ -399,3 +403,6 @@ pub fn actor_job(message_id: &str) -> String {
 pub fn task_job(task_id: &str) -> String {
     format!("task:{task_id}")
 }
+
+mod inspection;
+pub use inspection::*;

@@ -36,6 +36,11 @@ enum Command {
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=256))]
         slots: u16,
     },
+    /// Serve a read-only dashboard for this namespace.
+    Dashboard {
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        bind: std::net::SocketAddr,
+    },
     Deploy {
         component: PathBuf,
     },
@@ -133,6 +138,18 @@ async fn main() -> Result<()> {
         .database_url
         .context("set LOOM_DATABASE_URL or --database-url (demo uses memory)")?;
     let postgres = Arc::new(loom_backend_postgres::connect(&url, &cli.namespace).await?);
+    if let Command::Dashboard { bind } = cli.command {
+        loom_dashboard::serve(
+            loom_dashboard::Dashboard {
+                inspector: postgres.clone(),
+                objects: postgres,
+                namespace: cli.namespace,
+            },
+            bind,
+        )
+        .await?;
+        return Ok(());
+    }
     // Default adapters share Postgres; an independent ObjectStore can be supplied here.
     let backend: Arc<dyn Backend> = Arc::new(Stores::new(postgres.clone(), postgres));
     match cli.command {

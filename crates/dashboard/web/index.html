@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Loom · Cluster overview</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/style.css" />
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Loom home"
+        ><span class="mark">≋</span> loom<span class="brand-dot">.</span></a
+      >
+      <div class="side-label">WORKSPACE</div>
+      <div class="workspace">
+        <span class="workspace-icon">L</span>
+        <div>
+          <strong id="namespace">Loading…</strong
+          ><small>Distributed runtime</small>
+        </div>
+      </div>
+      <div class="side-label nav-label">OBSERVE</div>
+      <nav aria-label="Resources">
+        <button class="nav-item active" data-resource="tasks">
+          <span>↗</span> Tasks <b id="nav-tasks">—</b></button
+        ><button class="nav-item" data-resource="actors">
+          <span>◇</span> Actors <b id="nav-actors">—</b></button
+        ><button class="nav-item" data-resource="nodes">
+          <span>▦</span> Nodes <b id="nav-nodes">—</b></button
+        ><button class="nav-item" data-resource="messages">
+          <span>↔</span> Messages <b id="nav-messages">—</b>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="tiny-dot"></span> Read-only console
+        <p>Inspect execution.<br />Understand what happens next.</p>
+        <span class="version">LOOM / 0.1</span>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div>
+          <span class="breadcrumb">Workspace</span><span class="slash">/</span
+          ><strong>Overview</strong>
+        </div>
+        <div class="live-status" id="connection" role="status">
+          <span class="tiny-dot"></span
+          ><span id="connection-text">Connecting</span>
+        </div>
+      </header>
+      <section class="page-heading">
+        <div>
+          <div class="eyebrow">RUNTIME VISIBILITY</div>
+          <h1>Cluster overview<span>.</span></h1>
+          <p>
+            Your workers, work in progress, and durable state. In one place.
+          </p>
+        </div>
+        <button class="button" id="refresh">↻ <span>Refresh</span></button>
+      </section>
+      <div id="error-banner" class="banner error" role="alert" hidden></div>
+      <section class="metrics" aria-label="Cluster metrics">
+        <button class="metric" data-resource="nodes">
+          <span class="metric-label"
+            >Active nodes <span class="metric-icon">▦</span></span
+          ><strong id="metric-nodes">—</strong
+          ><small id="nodes-note">Waiting for backend</small>
+        </button>
+        <button class="metric" data-resource="tasks" data-phase="running">
+          <span class="metric-label"
+            >Running tasks <span class="metric-icon">↗</span></span
+          ><strong id="metric-running">—</strong
+          ><small id="running-note">Live execution leases</small>
+        </button>
+        <button class="metric" data-resource="tasks" data-phase="waiting">
+          <span class="metric-label"
+            >Pending tasks <span class="metric-icon">◷</span></span
+          ><strong id="metric-pending">—</strong
+          ><small id="pending-note">Queued, waiting, and retrying</small>
+        </button>
+        <button class="metric" data-resource="tasks" data-phase="failed">
+          <span class="metric-label"
+            >Failed tasks <span class="metric-icon">!</span></span
+          ><strong id="metric-failed">—</strong
+          ><small id="failed-note">Committed failures</small>
+        </button>
+      </section>
+      <section class="health-strip">
+        <div>
+          <span class="health-dot" id="health-dot"></span
+          ><strong id="health-title">Connecting to your runtime</strong
+          ><span id="health-description"
+            >Checking node leases and task state.</span
+          >
+        </div>
+        <span class="mono" id="snapshot-time">—</span>
+      </section>
+      <section class="execution-panel">
+        <div class="section-title">
+          <h2>Execution at a glance</h2>
+          <span id="execution-total" class="muted">— tasks</span>
+        </div>
+        <div
+          id="distribution"
+          class="distribution"
+          aria-label="Task state distribution"
+        ></div>
+        <div id="legend" class="legend"></div>
+      </section>
+      <section class="resource-panel">
+        <div class="section-title">
+          <div>
+            <h2 id="resource-title">Tasks</h2>
+            <p id="resource-description">
+              Follow work from submission to committed result.
+            </p>
+          </div>
+          <span id="result-count" class="count-label">—</span>
+        </div>
+        <div class="toolbar">
+          <label class="search"
+            ><span>⌕</span
+            ><input
+              id="search"
+              type="search"
+              placeholder="Search ID, function, or actor…"
+              aria-label="Search resources"
+              maxlength="512"
+            /><kbd>/</kbd></label
+          ><label id="phase-control"
+            ><span class="sr-only">Task status</span
+            ><select id="phase">
+              <option value="">All statuses</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="waiting">Waiting</option>
+              <option value="retrying">Retrying</option>
+              <option value="succeeded">Succeeded</option>
+              <option value="failed">Failed</option>
+            </select></label
+          ><label class="auto-refresh"
+            ><input id="auto" type="checkbox" checked /> Auto-refresh</label
+          >
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+        <div id="empty" class="empty" hidden>
+          <div>◇</div>
+          <h3 id="empty-title">No tasks yet</h3>
+          <p id="empty-description">
+            Submit a task to this namespace to see its progress here.
+          </p>
+        </div>
+        <footer class="pagination">
+          <span id="page-label">Loading resources…</span>
+          <div>
+            <button class="button small" id="previous" disabled>
+              ← Previous</button
+            ><button class="button small" id="next" disabled>Next →</button>
+          </div>
+        </footer>
+      </section>
+      <footer class="page-footer">
+        <span>State comes directly from your Loom backend.</span
+        ><span>Leases, not guesses.</span>
+      </footer>
+    </main>
+    <dialog id="detail">
+      <div class="drawer-head">
+        <div>
+          <span class="eyebrow" id="detail-kind">DETAIL</span>
+          <h2 id="detail-title">Execution details</h2>
+        </div>
+        <button id="close-detail" class="close" aria-label="Close details">
+          ×
+        </button>
+      </div>
+      <div id="detail-content"></div>
+    </dialog>
+  </body>
+</html>

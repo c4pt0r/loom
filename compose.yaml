@@ -42,6 +42,13 @@ services:
     <<: *node
     command: [--namespace, "${LOOM_NAMESPACE:-lab}", node, --id, node-b, --lease-ms, "5000", --slots, "${LOOM_SLOTS:-1}"]
 
+  dashboard:
+    <<: *node
+    profiles: [dashboard]
+    command: [--namespace, "${LOOM_NAMESPACE:-lab}", dashboard, --bind, "0.0.0.0:8787"]
+    ports:
+      - "127.0.0.1:${LOOM_DASHBOARD_PORT:-8787}:8787"
+
   cli:
     <<: *node
     profiles: [tools]

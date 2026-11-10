@@ -32,6 +32,14 @@ impl ObjectStore for MemoryObjectStore {
             .cloned()
             .ok_or_else(|| Error::NotFound(object.digest.clone()))
     }
+    async fn size(&self, object: &ObjectRef) -> Result<u64> {
+        self.objects
+            .lock()
+            .unwrap()
+            .get(&object.digest)
+            .map(|b| b.len() as u64)
+            .ok_or_else(|| Error::NotFound(object.digest.clone()))
+    }
     async fn get_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
         let objects = self.objects.lock().unwrap();
         let bytes = objects

@@ -68,6 +68,14 @@ impl Driver for MemoryDriver {
             .or_insert(bytes);
         Ok(ObjectRef::new(digest))
     }
+    async fn blob_size(&self, object: &ObjectRef) -> Result<u64> {
+        self.blobs
+            .lock()
+            .unwrap()
+            .get(&object.digest)
+            .map(|b| b.len() as u64)
+            .ok_or_else(|| Error::NotFound(object.digest.clone()))
+    }
     async fn get_blob(&self, object: &ObjectRef) -> Result<Bytes> {
         self.blobs
             .lock()
@@ -75,5 +83,24 @@ impl Driver for MemoryDriver {
             .get(&object.digest)
             .cloned()
             .ok_or_else(|| Error::NotFound(object.digest.clone()))
+    }
+}
+
+#[async_trait]
+impl loom_backend_core::inspection::InspectionDriver for MemoryDriver {
+    async fn inspect(&self, q: InspectQuery) -> Result<Inspection> {
+        self.ledger.lock().unwrap().inspect(q, self.clock.now_ms())
+    }
+    async fn inspect_job(&self, id: &str) -> Result<JobDetail> {
+        self.ledger
+            .lock()
+            .unwrap()
+            .inspect_job(id, self.clock.now_ms())
+    }
+    async fn inspect_actor(&self, id: &str) -> Result<ActorView> {
+        self.ledger
+            .lock()
+            .unwrap()
+            .inspect_actor(id, self.clock.now_ms(), 65536)
     }
 }

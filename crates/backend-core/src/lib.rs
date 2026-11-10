@@ -25,6 +25,8 @@ pub struct Job {
     pub receipt: Option<Receipt>,
     pub committed: Option<(Fence, Completion)>,
     pub failed_epoch: Option<u64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Kind {
@@ -100,6 +102,7 @@ impl Ledger {
                 receipt: None,
                 committed: None,
                 failed_epoch: None,
+                last_error: None,
             },
         );
     }
@@ -565,6 +568,7 @@ impl Ledger {
                     Kind::Message(m) => self.actors[&m.actor].spec.supervisor.backoff_ms,
                     _ => 100,
                 };
+                self.jobs.get_mut(&c.fence.job).unwrap().last_error = Some(reason.clone());
                 if j.attempts >= self.max_attempts(&j) {
                     self.finish_failure(&c.fence.job, reason, now)?;
                 } else {
@@ -599,6 +603,9 @@ pub trait Driver: Send + Sync {
     async fn transact(&self, op: Op) -> Result<Answer>;
     async fn put_blob(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get_blob(&self, object: &ObjectRef) -> Result<Bytes>;
+    async fn blob_size(&self, object: &ObjectRef) -> Result<u64> {
+        Ok(self.get_blob(object).await?.len() as u64)
+    }
     async fn get_blob_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
         slice_bytes(&self.get_blob(object).await?, offset, length)
     }
@@ -687,7 +694,12 @@ impl<D: Driver> ObjectStore for Store<D> {
     async fn get(&self, r: &ObjectRef) -> Result<Bytes> {
         self.0.get_blob(r).await
     }
+    async fn size(&self, r: &ObjectRef) -> Result<u64> {
+        self.0.blob_size(r).await
+    }
     async fn get_range(&self, r: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
         self.0.get_blob_range(r, offset, length).await
     }
 }
+
+pub mod inspection;
