@@ -118,6 +118,10 @@ impl Task for CountWords {
 `record` preserves the UTF-8 key bytes and serializes the `u64` value. The generic
 shuffle layer does not know these records represent words or counts.
 
+The driver explicitly selects `ShuffleLayout::hash(args.reducers)` so that equal
+words reach the same reducer. General shuffle defaults to random redistribution
+with `ShuffleLayout::new(partitions)`.
+
 The driver declares `output: TaskOutput::Shuffle(layout.clone())` on each Map
 `TaskSpec`. That tells the host to partition the returned records using
 `big_endian_u64(SHA256(key)[0:8]) % partition_count`, publish immutable blocks, and
@@ -196,7 +200,7 @@ once their inputs are ready, and task leases permit takeover on another worker.
 The `output` digest now points to a `PartitionedDataset`, not one global word map:
 
 ```text
-{ version: 1, layout: { partitions: 4 }, partitions: [ObjectRef, ...] }
+{ version: 1, layout: { partitions: 4, strategy: "Hash" }, partitions: [ObjectRef, ...] }
 ```
 
 Fetch the manifest, then any final partition you need:

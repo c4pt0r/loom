@@ -1,8 +1,20 @@
 # Partitioned shuffle
 
-Loom implements storage-mediated hash shuffle using Task, ObjectRef, and the
+Loom implements storage-mediated shuffle using Task, ObjectRef, and the
 existing execution/lease contracts. Shuffle is a task input/output mode, not a
 separate Flow primitive. It contains no word-count-specific logic.
+
+**New layouts default to random redistribution.** Use explicit hash partitioning
+when equal keys must reach the same reducer, such as Word Count or a keyed join.
+
+```rust
+let layout = ShuffleLayout::new(4);  // Random: spread records independently of keys.
+let keyed = ShuffleLayout::hash(4);  // Hash: group equal keys in one partition.
+```
+
+Random refers to record placement into logical partitions, not worker selection or
+a random permutation of records. It distributes record counts statistically; it
+does not guarantee equal bytes, equal compute cost, or exact partition sizes.
 
 ## Data path
 
@@ -32,7 +44,7 @@ coordination bottleneck.
 Types live in [`loom-contracts`](../crates/contracts/src/lib.rs).
 
 ```rust
-let layout = ShuffleLayout { partitions: 4 };
+let layout = ShuffleLayout::new(4);
 // Mapper TaskSpec:
 output: TaskOutput::Shuffle(layout.clone()),
 
@@ -62,21 +74,36 @@ identical content and must both contribute to a result.
 
 ## Versioned partitioning and storage format
 
-Version 1 uses exactly:
+Version 2 records `strategy: "Random"` or `strategy: "Hash"` in the layout.
+For the default random strategy, the host computes:
+
+```text
+digest = SHA256(b"loom/random-shuffle/v2\0" || ordinal_as_u64_big_endian || task_id_utf8)
+partition = big_endian_u64(digest[0:8]) % partition_count
+```
+
+The ordinal starts at zero for each mapper's output. Keys and values do not affect
+routing. Even identical keys can enter different partitions, and distinct task
+IDs produce independent pseudorandom assignments. Retrying the same logical task
+with the same output order produces the same blocks and manifest. This is
+deterministic pseudorandom redistribution; no centralized random-number service
+or shared counter is needed.
+
+The explicit hash strategy retains the version 1 rule:
 
 ```text
 partition = big_endian_u64(SHA256(key_bytes)[0:8]) % partition_count
 ```
 
 This does not depend on Rust's randomized hashers, machine endianness, or process
-identity. Equal key bytes always route together. Applications must choose a stable
+identity. In Hash mode, equal key bytes always route together. Applications must choose a stable
 key encoding; string keys in Word Count are unnormalized UTF-8 bytes.
 
 The mapper's committed task result references a `ShuffleManifest`:
 
 ```text
-version: 1
-layout: { partitions: P }
+version: 2
+layout: { partitions: P, strategy: "Random" }
 partitions: [
   [ { object: ObjectRef, records: count, bytes: encoded_length }, ... ],
   ... P entries ...
@@ -91,7 +118,9 @@ partition; shuffle does not sort keys or promise a global ordering.
 Only block references, record counts, and byte lengths live in the manifest. All
 blocks are written before the manifest, and the task's existing fenced commit
 publishes the manifest reference. Reducers check manifest version/layout, block
-lengths, record counts, and routing of every selected record.
+lengths and record counts. In Hash mode they also verify each selected record's
+key routing. In Random mode, placement is defined by the committed manifest;
+reducers do not infer a partition from the key.
 
 The implementation is [`loom-shuffle`](../crates/shuffle/src/lib.rs). It depends on
 contracts and serialization/hash libraries, not PostgreSQL, Wasmtime, or a driver.
@@ -167,12 +196,21 @@ This is a bounded first implementation:
   backpressure-aware producer streaming, or object garbage collection yet.
 - Backend metadata updates still serialize on one namespace ledger row.
 
-A hot key can dominate a partition. More partitions do not split one key; skew
-requires application-side combining/salting or a later multi-stage strategy.
+In Hash mode, a hot key can dominate a partition. More partitions do not split one
+key; skew requires application-side combining/salting or a later multi-stage
+strategy. Random mode spreads occurrences of a hot key, but reducers cannot assume
+they own every occurrence of a key. Per-key aggregation then needs a subsequent
+keyed stage or an explicit merge.
 
 Old task records deserialize with `output = Value`; existing Wasm task/actor entry
-points are unchanged. New `Input::Shuffle` records require upgraded workers.
-Upgrade **all workers sharing a namespace** before submitting shuffle tasks;
+points are unchanged. For backward compatibility, a stored layout without a
+`strategy` field still means Hash, and version 1 Hash manifests remain readable.
+New Rust layouts use `ShuffleLayout::new` for Random and always serialize an
+explicit strategy; JSON task producers must also supply `"strategy": "Random"`
+to opt into the new default semantics rather than the legacy wire format.
+Version 1 manifests declaring Random are rejected, as are mismatched strategies
+between maps and reducers. New manifests are written as version 2.
+Upgrade **all workers sharing a namespace** before submitting new shuffle tasks;
 rolling mixed-version execution is not supported by this prototype.
 
 The [Word Count example](quickstart-word-count.md) uses this protocol. The original

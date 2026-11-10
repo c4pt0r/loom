@@ -92,7 +92,7 @@ async fn shuffle_payloads_use_only_the_injected_object_store() {
         )
         .await
         .unwrap();
-    let layout = ShuffleLayout { partitions: 1 };
+    let layout = ShuffleLayout::hash(1);
     store
         .submit(task(
             "map",

@@ -180,9 +180,8 @@ async fn main() -> Result<()> {
         "example supports at most 1024 map chunks"
     );
     let expected_total = text.split_whitespace().count() as u64;
-    let layout = ShuffleLayout {
-        partitions: args.reducers,
-    };
+    // Equal words must meet at one reducer; random redistribution is the default elsewhere.
+    let layout = ShuffleLayout::hash(args.reducers);
     let postgres = std::sync::Arc::new(
         loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
     );

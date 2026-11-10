@@ -38,7 +38,7 @@ impl Node {
                 let output = match &spec.output {
                     TaskOutput::Value => self.store.put(bytes).await?,
                     TaskOutput::Shuffle(layout) => {
-                        loom_shuffle::publish(self.store.as_ref(), layout, &bytes).await?
+                        loom_shuffle::publish(self.store.as_ref(), layout, &spec.id, &bytes).await?
                     }
                 };
                 Ok(Completion::Task { output })

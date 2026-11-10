@@ -55,12 +55,38 @@ pub enum Input {
 pub const MAX_SHUFFLE_PARTITIONS: u32 = 256;
 pub const MAX_SHUFFLE_SOURCES: usize = 1024;
 
-/// Protocol v1: SHA-256(key bytes), first eight bytes as big-endian u64, modulo partitions.
+/// Random redistribution is the default for new layouts; keyed grouping is explicit.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ShuffleStrategy {
+    #[default]
+    Random,
+    Hash,
+}
+
+fn legacy_shuffle_strategy() -> ShuffleStrategy {
+    ShuffleStrategy::Hash
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShuffleLayout {
     pub partitions: u32,
+    // Previously persisted layouts had no strategy and always used key hashing.
+    #[serde(default = "legacy_shuffle_strategy")]
+    pub strategy: ShuffleStrategy,
 }
 impl ShuffleLayout {
+    pub fn new(partitions: u32) -> Self {
+        Self {
+            partitions,
+            strategy: ShuffleStrategy::default(),
+        }
+    }
+    pub fn hash(partitions: u32) -> Self {
+        Self {
+            partitions,
+            strategy: ShuffleStrategy::Hash,
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         if self.partitions == 0 || self.partitions > MAX_SHUFFLE_PARTITIONS {
             return Err(Error::Invalid("shuffle partitions must be 1..256".into()));

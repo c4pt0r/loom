@@ -57,7 +57,7 @@ def main():
         assert all(task["attempts"] == 1 for task in (result["map_tasks"] + result["reduce_tasks"])), label
         saved = json.loads(dc("run", "--rm", "-T", "cli", "--namespace",
                               os.getenv("LOOM_NAMESPACE", "lab"), "get", result["output"]).stdout)
-        assert saved["version"] == 1 and saved["layout"] == {"partitions": 4}
+        assert saved["version"] == 1 and saved["layout"] == {"partitions": 4, "strategy": "Hash"}
         assert saved["partitions"] == result["partitions"]
         combined = {}
         for partition, reference in enumerate(saved["partitions"]):
@@ -76,7 +76,7 @@ def main():
             for task in result["map_tasks"]:
                 manifest = json.loads(dc("run", "--rm", "-T", "cli", "--namespace",
                                          os.getenv("LOOM_NAMESPACE", "lab"), "get", task["output"]).stdout)
-                assert manifest["version"] == 1 and manifest["layout"] == {"partitions": 4}
+                assert manifest["version"] == 2 and manifest["layout"] == {"partitions": 4, "strategy": "Hash"}
                 for partition, blocks in enumerate(manifest["partitions"]):
                     for block in blocks:
                         raw = dc("run", "--rm", "-T", "cli", "--namespace",

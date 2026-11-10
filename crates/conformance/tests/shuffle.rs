@@ -99,7 +99,7 @@ async fn output(store: &dyn Backend, id: &str) -> ObjectRef {
 
 #[test]
 fn stable_hash_vectors_and_legacy_defaults() {
-    let layout = ShuffleLayout { partitions: 7 };
+    let layout = ShuffleLayout::hash(7);
     // Independent published SHA-256 prefixes for empty input and "abc".
     assert_eq!(
         partition_for(b"", &layout).unwrap(),
@@ -113,12 +113,140 @@ fn stable_hash_vectors_and_legacy_defaults() {
         "input":{"Inline":[]},"max_attempts":1,"notify":null});
     let decoded: TaskSpec = serde_json::from_value(old).unwrap();
     assert_eq!(decoded.output, TaskOutput::Value);
+    assert_eq!(ShuffleLayout::new(7).strategy, ShuffleStrategy::Random);
+    assert!(partition_for(b"abc", &ShuffleLayout::new(7)).is_err());
+    // Old persisted layouts retain keyed semantics; new layouts serialize the strategy.
+    let old_layout: ShuffleLayout = serde_json::from_str(r#"{"partitions":7}"#).unwrap();
+    assert_eq!(old_layout, layout);
+    let random = ShuffleLayout::new(7);
+    let roundtrip: ShuffleLayout = decode(&encode(&random).unwrap()).unwrap();
+    assert_eq!(roundtrip, random);
+    let old_manifest: ShuffleManifest = serde_json::from_value(serde_json::json!({
+        "version":1,"layout":{"partitions":7},"partitions":[[],[],[],[],[],[],[]]
+    }))
+    .unwrap();
+    loom_shuffle::validate_manifest(&old_manifest, &layout).unwrap();
+    assert!(loom_shuffle::validate_manifest(&old_manifest, &random).is_err());
+    let mut invalid = old_manifest;
+    invalid.layout = random.clone();
+    assert!(loom_shuffle::validate_manifest(&invalid, &random).is_err());
+}
+
+#[tokio::test]
+async fn default_random_shuffle_spreads_identical_keys_and_preserves_records() {
+    let store = memory(Arc::new(ManualClock::default()));
+    let layout = ShuffleLayout::new(4);
+    let records: Vec<_> = (0..4096).map(|n| record(b"hot-key", n)).collect();
+    let bytes = encode(&records).unwrap();
+    let first = loom_shuffle::publish(&store, &layout, "source-a", &bytes)
+        .await
+        .unwrap();
+    assert_eq!(
+        first,
+        loom_shuffle::publish(&store, &layout, "source-a", &bytes)
+            .await
+            .unwrap()
+    );
+    assert_ne!(
+        first,
+        loom_shuffle::publish(&store, &layout, "source-b", &bytes)
+            .await
+            .unwrap()
+    );
+    let manifest: ShuffleManifest = decode(&store.get(&first).await.unwrap()).unwrap();
+    loom_shuffle::validate_manifest(&manifest, &layout).unwrap();
+    assert!(loom_shuffle::validate_manifest(&manifest, &ShuffleLayout::hash(4)).is_err());
+    let mut found = Vec::new();
+    for (partition, blocks) in manifest.partitions.iter().enumerate() {
+        let count: u32 = blocks.iter().map(|block| block.records).sum();
+        // A fixed fixture, not a flaky random trial; reject key-based or badly skewed routing.
+        assert!(
+            (750..1300).contains(&count),
+            "partition {partition}: {count}"
+        );
+        for block in blocks {
+            for item in loom_shuffle::read_block(&store, block, &layout, partition as u32)
+                .await
+                .unwrap()
+            {
+                assert_eq!(item.key, b"hot-key");
+                found.push(decode::<u64>(&item.value).unwrap());
+            }
+        }
+    }
+    found.sort_unstable();
+    assert_eq!(found, (0..4096).collect::<Vec<u64>>());
+    // Single-record maps must not all choose the same partition because their ordinal is zero.
+    let mut occupied = [false; 4];
+    for n in 0..64 {
+        let r = loom_shuffle::publish(
+            &store,
+            &layout,
+            &format!("single-{n}"),
+            &encode(&vec![record(b"same", 1)]).unwrap(),
+        )
+        .await
+        .unwrap();
+        let manifest: ShuffleManifest = decode(&store.get(&r).await.unwrap()).unwrap();
+        for (i, blocks) in manifest.partitions.iter().enumerate() {
+            occupied[i] |= !blocks.is_empty();
+        }
+    }
+    assert!(occupied.into_iter().all(|present| present));
+    let empty = loom_shuffle::publish(&store, &layout, "empty", b"[]")
+        .await
+        .unwrap();
+    let manifest: ShuffleManifest = decode(&store.get(&empty).await.unwrap()).unwrap();
+    assert!(manifest.partitions.iter().all(Vec::is_empty));
+}
+
+async fn random_runtime(store: Arc<dyn Backend>) {
+    let layout = ShuffleLayout::new(4);
+    let records: Vec<_> = (0..512).map(|_| record(b"same-key", 1)).collect();
+    for id in ["random-a", "random-b"] {
+        store.submit(map(id, &layout, &records)).await.unwrap();
+    }
+    for partition in 0..4 {
+        store
+            .submit(reducer(
+                &format!("random-reduce-{partition}"),
+                &layout,
+                partition,
+                vec![
+                    ShuffleSource::TaskResult("random-a".into()),
+                    ShuffleSource::TaskResult("random-b".into()),
+                ],
+            ))
+            .await
+            .unwrap();
+    }
+    let a = node(store.clone(), engine(), "random-worker-a");
+    let b = node(store.clone(), engine(), "random-worker-b");
+    a.register().await.unwrap();
+    b.register().await.unwrap();
+    for _ in 0..3 {
+        a.tick().await.unwrap();
+        b.tick().await.unwrap();
+    }
+    let mut total = 0;
+    for partition in 0..4 {
+        let r = output(store.as_ref(), &format!("random-reduce-{partition}")).await;
+        let count: u64 = decode(&store.get(&r).await.unwrap()).unwrap();
+        assert!(count > 0);
+        total += count;
+    }
+    assert_eq!(total, 1024);
+}
+
+#[tokio::test]
+async fn random_shuffle_runs_across_workers() {
+    random_runtime(Arc::new(memory(Arc::new(ManualClock::default())))).await;
 }
 
 #[tokio::test]
 async fn opaque_records_route_deterministically_and_blocks_are_bounded() {
     let store = memory(Arc::new(ManualClock::default()));
-    let layout = ShuffleLayout { partitions: 4 };
+    let layout = ShuffleLayout::hash(4);
     let records = (0..1600)
         .map(|n| ShuffleRecord {
             key: vec![(n % 251) as u8, 0xff],
@@ -130,10 +258,10 @@ async fn opaque_records_route_deterministically_and_blocks_are_bounded() {
         }])
         .collect::<Vec<_>>();
     let bytes = encode(&records).unwrap();
-    let a = loom_shuffle::publish(&store, &layout, &bytes)
+    let a = loom_shuffle::publish(&store, &layout, "map", &bytes)
         .await
         .unwrap();
-    let b = loom_shuffle::publish(&store, &layout, &bytes)
+    let b = loom_shuffle::publish(&store, &layout, "map", &bytes)
         .await
         .unwrap();
     assert_eq!(a, b);
@@ -159,7 +287,7 @@ async fn opaque_records_route_deterministically_and_blocks_are_bounded() {
         value: vec![255; 70_000],
     }];
     assert!(
-        loom_shuffle::publish(&store, &layout, &encode(&oversized).unwrap())
+        loom_shuffle::publish(&store, &layout, "map", &encode(&oversized).unwrap())
             .await
             .is_err()
     );
@@ -167,7 +295,7 @@ async fn opaque_records_route_deterministically_and_blocks_are_bounded() {
 
 // Exercise the SAME dependency, fencing, and runtime path on memory and Postgres.
 async fn barrier_and_takeover(store: Arc<dyn Backend>, clock: Option<Arc<ManualClock>>) {
-    let layout = ShuffleLayout { partitions: 1 };
+    let layout = ShuffleLayout::hash(1);
     let a = node(store.clone(), engine(), "old");
     let b = node(store.clone(), engine(), "survivor");
     store.register(a.session.clone(), 60_000).await.unwrap();
@@ -257,6 +385,7 @@ async fn postgres_shuffle_barrier_and_takeover() {
         .unwrap(),
         14
     );
+    random_runtime(Arc::new(reopened)).await;
 }
 
 #[tokio::test]
@@ -264,7 +393,7 @@ async fn failed_dependency_does_not_wait_for_other_busy_maps() {
     let store: Arc<dyn Backend> = Arc::new(memory(Arc::new(ManualClock::default())));
     let n = node(store.clone(), engine(), "n");
     n.register().await.unwrap();
-    let layout = ShuffleLayout { partitions: 2 };
+    let layout = ShuffleLayout::hash(2);
     store.submit(map("busy", &layout, &[])).await.unwrap();
     let mut bad = map("bad", &layout, &[]);
     bad.max_attempts = 1;
@@ -293,7 +422,7 @@ async fn failed_dependency_does_not_wait_for_other_busy_maps() {
 #[tokio::test]
 async fn invalid_dependencies_are_rejected_before_enqueue() {
     let store = memory(Arc::new(ManualClock::default()));
-    let layout = ShuffleLayout { partitions: 2 };
+    let layout = ShuffleLayout::hash(2);
     store.submit(map("a", &layout, &[])).await.unwrap();
     let source = ShuffleSource::TaskResult("a".into());
     let cases = [
@@ -311,12 +440,13 @@ async fn invalid_dependencies_are_rejected_before_enqueue() {
         ),
         reducer("range", &layout, 2, vec![source.clone()]),
         reducer(
-            "mismatch",
-            &ShuffleLayout { partitions: 3 },
+            "strategy-mismatch",
+            &ShuffleLayout::new(2),
             0,
-            vec![source],
+            vec![source.clone()],
         ),
-        map("zero", &ShuffleLayout { partitions: 0 }, &[]),
+        reducer("mismatch", &ShuffleLayout::hash(3), 0, vec![source]),
+        map("zero", &ShuffleLayout::hash(0), &[]),
         reducer(
             "too-many",
             &layout,
@@ -334,12 +464,13 @@ async fn invalid_dependencies_are_rejected_before_enqueue() {
 #[tokio::test]
 async fn reducer_reads_only_selected_partition_and_checks_routing() {
     let store: Arc<dyn Backend> = Arc::new(memory(Arc::new(ManualClock::default())));
-    let layout = ShuffleLayout { partitions: 2 };
+    let layout = ShuffleLayout::hash(2);
     let key = b"abc";
     let partition = partition_for(key, &layout).unwrap();
     let reference = loom_shuffle::publish(
         store.as_ref(),
         &layout,
+        "map",
         &encode(&vec![record(key, 11)]).unwrap(),
     )
     .await
@@ -404,10 +535,11 @@ async fn reducer_retry_restarts_accumulator_and_empty_partition_initializes() {
     });
     let n = node(store.clone(), e, "n");
     n.register().await.unwrap();
-    let layout = ShuffleLayout { partitions: 1 };
+    let layout = ShuffleLayout::hash(1);
     let reference = loom_shuffle::publish(
         store.as_ref(),
         &layout,
+        "map",
         &encode(&vec![record(b"same", 9)]).unwrap(),
     )
     .await
@@ -477,7 +609,7 @@ impl ObjectStore for FailingPublication {
 #[tokio::test]
 async fn interrupted_block_publication_never_returns_partial_manifest() {
     let store: Arc<dyn Backend> = Arc::new(memory(Arc::new(ManualClock::default())));
-    let layout = ShuffleLayout { partitions: 1 };
+    let layout = ShuffleLayout::hash(1);
     let records = vec![
         ShuffleRecord {
             key: b"opaque".to_vec(),
@@ -491,12 +623,12 @@ async fn interrupted_block_publication_never_returns_partial_manifest() {
         writes: AtomicUsize::new(0),
     };
     assert!(matches!(
-        loom_shuffle::publish(&broken, &layout, &bytes).await,
+        loom_shuffle::publish(&broken, &layout, "map", &bytes).await,
         Err(Error::Unavailable(_))
     ));
     assert_eq!(broken.writes.load(Ordering::SeqCst), 2);
     // Retry may reuse orphaned immutable blocks, but exposes only a complete manifest.
-    let result = loom_shuffle::publish(store.as_ref(), &layout, &bytes)
+    let result = loom_shuffle::publish(store.as_ref(), &layout, "map", &bytes)
         .await
         .unwrap();
     let manifest: ShuffleManifest = decode(&store.get(&result).await.unwrap()).unwrap();

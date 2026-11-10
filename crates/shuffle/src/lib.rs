@@ -1,8 +1,8 @@
-//! Storage-mediated hash shuffle. No database, transport, or Wasm dependency.
+//! Storage-mediated random or keyed shuffle. No database, transport, or Wasm dependency.
 use loom_contracts::*;
 use sha2::{Digest, Sha256};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_MANIFEST_BLOCKS: usize = 4096;
@@ -27,9 +27,24 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 /// Stable across languages, architectures, and process restarts. Empty keys are valid.
 pub fn partition_for(key: &[u8], layout: &ShuffleLayout) -> Result<u32> {
     layout.validate()?;
+    if layout.strategy != ShuffleStrategy::Hash {
+        return Err(invalid("key routing requires Hash shuffle"));
+    }
     let hash = Sha256::digest(key);
     let value = u64::from_be_bytes(hash[..8].try_into().unwrap());
     Ok((value % u64::from(layout.partitions)) as u32)
+}
+
+/// Pseudorandom routing independent of key/value, stable for retries of a logical task.
+/// The fixed-width ordinal avoids ambiguity even when task IDs contain arbitrary bytes.
+fn random_partition(source_id: &str, ordinal: u64, partitions: u32) -> u32 {
+    let mut hash = Sha256::new();
+    hash.update(b"loom/random-shuffle/v2\0");
+    hash.update(ordinal.to_be_bytes());
+    hash.update(source_id.as_bytes());
+    let digest = hash.finalize();
+    let value = u64::from_be_bytes(digest[..8].try_into().unwrap());
+    (value % u64::from(partitions)) as u32
 }
 
 /// Publish blocks first, then their manifest. Only the later fenced task commit
@@ -37,13 +52,19 @@ pub fn partition_for(key: &[u8], layout: &ShuffleLayout) -> Result<u32> {
 pub async fn publish(
     store: &dyn ObjectStore,
     layout: &ShuffleLayout,
+    source_id: &str,
     output: &[u8],
 ) -> Result<ObjectRef> {
     layout.validate()?;
     let records: Vec<ShuffleRecord> = decode(output)?;
     let mut buckets = vec![Vec::new(); layout.partitions as usize];
-    for record in records {
-        let partition = partition_for(&record.key, layout)? as usize;
+    for (ordinal, record) in records.into_iter().enumerate() {
+        let partition = match layout.strategy {
+            ShuffleStrategy::Random => {
+                random_partition(source_id, ordinal as u64, layout.partitions)
+            }
+            ShuffleStrategy::Hash => partition_for(&record.key, layout)?,
+        } as usize;
         let bytes = serde_json::to_vec(&record).map_err(invalid)?;
         if bytes.len() + 2 > MAX_BLOCK_BYTES {
             return Err(invalid("shuffle record exceeds 64 KiB encoded block limit"));
@@ -90,7 +111,9 @@ async fn write_block(store: &dyn ObjectStore, bytes: Bytes, records: u32) -> Res
 
 pub fn validate_manifest(manifest: &ShuffleManifest, expected: &ShuffleLayout) -> Result<()> {
     expected.validate()?;
-    if manifest.version != VERSION
+    let supported = manifest.version == VERSION
+        || (manifest.version == 1 && manifest.layout.strategy == ShuffleStrategy::Hash);
+    if !supported
         || &manifest.layout != expected
         || manifest.partitions.len() != expected.partitions as usize
     {
@@ -115,6 +138,10 @@ pub async fn read_block(
     layout: &ShuffleLayout,
     partition: u32,
 ) -> Result<Vec<ShuffleRecord>> {
+    layout.validate()?;
+    if partition >= layout.partitions {
+        return Err(invalid("shuffle partition out of range"));
+    }
     let bytes = store.get(&block.object).await?;
     if bytes.len() != block.bytes as usize || bytes.len() > MAX_BLOCK_BYTES {
         return Err(invalid("shuffle block length mismatch"));
@@ -124,7 +151,9 @@ pub async fn read_block(
         return Err(invalid("shuffle block record count mismatch"));
     }
     for record in &records {
-        if partition_for(&record.key, layout)? != partition {
+        if layout.strategy == ShuffleStrategy::Hash
+            && partition_for(&record.key, layout)? != partition
+        {
             return Err(invalid("shuffle key routed to wrong partition"));
         }
     }
