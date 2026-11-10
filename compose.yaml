@@ -1,7 +1,7 @@
 name: loom-local
 
 x-backend: &backend
-  LOOM_DATABASE_URL: host=postgres port=5432 user=loom password=loom-local-only dbname=loom
+  LOOM_DATABASE_URL: "postgresql://loom:loom-local-only@postgres:5432/loom"
 
 x-node: &node
   image: loom-local:dev
@@ -55,7 +55,7 @@ services:
     profiles: [tests]
     environment:
       <<: *backend
-      LOOM_TEST_DATABASE_URL: host=postgres port=5432 user=loom password=loom-local-only dbname=loom
+      LOOM_TEST_DATABASE_URL: "postgresql://loom:loom-local-only@postgres:5432/loom"
     depends_on:
       postgres:
         condition: service_healthy

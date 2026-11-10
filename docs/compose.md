@@ -41,7 +41,10 @@ Normal shutdown uses SIGINT so Loom can drain the current turn. Restarting a nod
 with the same ID requires its previous incarnation's lease to expire.
 
 PostgreSQL uses local-development credentials in `compose.yaml`; it has no host port
-mapping. To inspect it:
+mapping. Clients, workers, and integration tests use the URI DSN
+`postgresql://loom:loom-local-only@postgres:5432/loom` via `LOOM_DATABASE_URL`
+(and `LOOM_TEST_DATABASE_URL` for tests). Percent-encode reserved characters in
+credentials when supplying your own DSN. To inspect the database:
 
 ```sh
 docker compose exec postgres psql -U loom -d loom

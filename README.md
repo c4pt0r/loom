@@ -40,6 +40,11 @@ dc up -d --wait --no-recreate postgres node-a node-b
 dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" members
 ```
 
+Compose configures `LOOM_DATABASE_URL` as a PostgreSQL URI DSN:
+`postgresql://loom:loom-local-only@postgres:5432/loom`. Native clients and workers
+use the same URI format, with a hostname they can reach. Percent-encode reserved
+characters in usernames and passwords, for example `@` as `%40`.
+
 The first build downloads dependencies and compiles Rust and Wasmtime; allow a few
 minutes. `--no-recreate` preserves workers that are already running. They can load
 the new sorting component without restarting. `members` should list `node-a` and
@@ -471,7 +476,7 @@ Use a development PostgreSQL database. The adapter creates only `loom_ledgers` a
 TLS and is intended for a trusted local environment.
 
 ```sh
-export LOOM_DATABASE_URL='host=127.0.0.1 port=5432 user=YOUR_USER dbname=postgres'
+export LOOM_DATABASE_URL='postgresql://YOUR_USER:YOUR_PASSWORD@127.0.0.1:5432/postgres'
 
 target/debug/loom --namespace lab deploy target/research-agent.component.wasm
 # Copy the returned module digest:

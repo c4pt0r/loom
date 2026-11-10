@@ -30,6 +30,11 @@ dc up -d --wait --no-recreate postgres node-a node-b
 dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" members
 ```
 
+Compose configures `LOOM_DATABASE_URL` as a PostgreSQL URI DSN:
+`postgresql://loom:loom-local-only@postgres:5432/loom`. Native clients and workers
+use the same URI format, with a hostname they can reach. Percent-encode reserved
+characters in usernames and passwords, for example `@` as `%40`.
+
 The first build downloads dependencies and compiles Rust and Wasmtime; allow a few
 minutes. `--no-recreate` preserves workers that are already running. They can load
 the new sorting component without restarting. `members` should list `node-a` and
