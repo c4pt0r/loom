@@ -8,22 +8,29 @@ minimal OneForOne restart policy. Flow is deliberately absent. Channel is deferr
 The examples cover distributed sorting and a durable agent state machine that
 fans out analysis, aggregates results, waits for approval, and resumes after restart.
 
-## Quickstart：用 Rust 和 Loom 做分布式排序
+## Quickstart: distributed sorting with Rust and Loom
 
-这篇教程把一组整数切成多个分片，交给两个 Loom 节点并行排序，最后在客户端归并成一个有序数组。你会用到两个原语：**Task** 执行排序，**ObjectRef** 引用输入和结果。
+Split an array of integers into chunks, sort the chunks on two Loom workers, and
+merge their results into one sorted array. Both the task and the client are written
+in Rust. You will use **Task** to run computation and **ObjectRef** to pass immutable
+inputs and results.
 
-排序逻辑和客户端均用 Rust 编写。排序逻辑编译成 Wasm；节点负责领取任务、执行和保存结果。整个例子通过 Docker Compose 运行，本机只需要 Docker Engine 和 Compose，不需要安装 Rust 或 PostgreSQL。
+This guide first runs the example, then walks through its implementation. The
+sorting code compiles to a Wasm Component. Rust worker processes claim tasks,
+execute the component, and commit results. Docker builds everything, so you only
+need Docker Engine and Compose on your machine.
 
-### 1. 启动两个节点
+### 1. Start two workers
 
-首次使用先克隆仓库；已有本地源码则直接进入仓库根目录：
+Clone the repository, or enter its root if you already have the source:
 
 ```sh
 git clone https://github.com/c4pt0r/loom.git
 cd loom
 ```
 
-定义一个便捷命令，兼容这个工作区的 Colima，也兼容已配置的 Docker Desktop：
+Define a shortcut for Compose. The wrapper supports the development workspace's
+local Colima instance and otherwise uses your existing Docker configuration:
 
 ```sh
 dc() { scripts/local-env.sh docker compose "$@"; }
@@ -33,83 +40,103 @@ dc up -d --wait --no-recreate postgres node-a node-b
 dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" members
 ```
 
-第一次构建需要下载依赖并编译 Rust/Wasmtime，可能需要几分钟。`--no-recreate` 会保留已经运行的节点，它们也可以加载新的排序 Wasm。`members` 应显示 `node-a` 和 `node-b`。如果刚启动时只看到一个节点，稍后再执行一次。
+The first build downloads dependencies and compiles Rust and Wasmtime; allow a few
+minutes. `--no-recreate` preserves workers that are already running. They can load
+the new sorting component without restarting. `members` should list `node-a` and
+`node-b`; if registration is still in progress, run it again shortly.
 
-### 2. 运行第一次分布式排序
+### 2. Run distributed sorting
 
 ```sh
 dc --profile tools run --rm -T sort
 ```
 
-默认生成 **16,000 个整数**，拆成 **16 个分片**，每片 1,000 个。客户端会自动部署排序 Wasm，提交所有任务，再等待结果。
-
-终端先显示：
+The client generates **16,000 integers** and submits **16 tasks**, each sorting
+1,000 integers. It uploads the Wasm component automatically, submits all chunks,
+and waits for their results. You will first see:
 
 ```text
 Submitted 16 tasks (run: sort-...)
 ```
 
-随后输出 JSON 报告，包含：
+The JSON report contains:
 
-| 字段 | 含义 |
+| Field | Meaning |
 | --- | --- |
-| `count: 16000` | 排序后的元素数量 |
-| `task_count: 16` | 提交的排序任务数量 |
-| `verified: true` | 结果与独立的本地参考排序完全一致，包括重复值 |
-| `output` | 完整有序数组的 ObjectRef digest |
-| `tasks` | 每个分片的任务 ID、尝试次数和输出 digest |
-| `run` | 本次运行的唯一标识，用于查日志 |
+| `count: 16000` | Number of sorted integers |
+| `task_count: 16` | Number of submitted tasks |
+| `verified: true` | Complete result matches a local reference sort, including duplicates |
+| `output` | ObjectRef digest of the complete sorted array |
+| `tasks` | Task IDs, attempt counts, and output digests for individual chunks |
+| `run` | Unique identifier for finding this run in worker logs |
 
-这里的本地参考排序只用于验证；远程任务失败时，客户端会报错退出。
+The local reference sort checks correctness. A failed remote task causes the
+client to return an error.
 
-数据经过以下步骤：
-
-```text
-Rust 客户端：切片 → 保存输入 ObjectRef → 提交所有 sort_chunk Task
-                                     │
-                      ┌──────────────┴──────────────┐
-                 node-a 执行 Wasm              node-b 执行 Wasm
-                      └──────────────┬──────────────┘
-                              保存结果 ObjectRef
-                                     │
-Rust 客户端：等待结果 → 读取有序分片 → 多路归并 → 保存最终 ObjectRef
-```
-
-节点从共享任务队列中领取任务，不保证各处理一半，也不保证某个任务落到指定节点。
-
-### 3. 排序自己的数据
-
-输入格式是 JSON 数组，元素为有符号 64 位整数。负数和重复值都支持：
+To sort your own data, pass a JSON array of signed 64-bit integers:
 
 ```sh
 printf '%s\n' '[9, -2, 7, 7, 0, 3, -8, 1]' |
   dc --profile tools run --rm -T sort --stdin --chunk-size 3 --print-result
 ```
 
-这会创建 3 个任务。报告中应出现：
+This submits three tasks. The report includes:
 
 ```json
 "sorted": [-8, -2, 0, 1, 3, 7, 7, 9]
 ```
 
-从文件读取也一样：
+You can also read from a file containing a JSON array:
 
 ```sh
 dc --profile tools run --rm -T sort --stdin --print-result < numbers.json
 ```
 
-`numbers.json` 需要是同样格式的 JSON 数组。`--print-result` 会打印完整结果；大一点的输入建议省略它，使用报告中的 `output` 获取结果：
+Omit `--print-result` to avoid printing a large array. Retrieve the saved result
+later using the report's `output` digest:
 
 ```sh
-# 将 OUTPUT_DIGEST 替换成报告里的 output 值。
+# Replace OUTPUT_DIGEST with the report's output value.
 dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" get OUTPUT_DIGEST
 ```
 
-每次运行会生成新的任务 ID，因此可以反复运行，不会与之前的任务冲突。
+Each run gets new task IDs, so you can repeat these commands without conflicting
+with previous runs.
 
-### 4. 排序任务只有几行 Rust
+### 3. Understand the execution model
 
-打开 [`examples/sort-guest/src/lib.rs`](examples/sort-guest/src/lib.rs)。核心代码是：
+```text
+Rust client
+  split input -> store chunk objects -> submit all sort_chunk tasks
+                                          |
+                          +---------------+---------------+
+                          |                               |
+                     node-a: Wasm                    node-b: Wasm
+                          |                               |
+                          +------ commit result refs -----+
+                                          |
+Rust client
+  wait for tasks -> read sorted chunks -> k-way merge -> store final object
+```
+
+The client submits work through Loom's backend interfaces. Workers poll the shared
+queue and claim available tasks. The client does not select a worker or establish
+a direct connection to it. Distribution depends on availability; there is no
+promise that each worker receives half the chunks.
+
+The implementation lives in two small packages:
+
+| Source | Runs where | Responsibility |
+| --- | --- | --- |
+| [`examples/sort-guest/src/lib.rs`](examples/sort-guest/src/lib.rs) | Wasm inside a worker | Sort one chunk |
+| [`examples/sort-client/src/main.rs`](examples/sort-client/src/main.rs) | Native Rust client | Submit tasks, collect results, and merge |
+
+The following excerpts use the implemented API. Read the linked files for imports,
+argument parsing, and the complete executable.
+
+### 4. Define a typed Rust task
+
+The guest's computation is an ordinary Rust implementation of `Task`:
 
 ```rust
 struct SortChunk;
@@ -125,45 +152,212 @@ impl Task for SortChunk {
 }
 ```
 
-`Task` 定义输入、输出和计算。你不用在任务里选择节点、访问数据库或管理重试。这个任务没有外部副作用，可以安全地重新执行。
+`Input` and `Output` define the types at the task boundary. The guest SDK decodes
+incoming JSON into `Vec<i64>`, calls `run`, and serializes the returned vector.
+`sort_unstable` preserves duplicate values; stability is unnecessary when sorting
+plain integers.
 
-同一文件中的 `Guest::task` 将函数名 `sort_chunk` 分派到 `run_task::<SortChunk>`，后者处理 JSON 编解码；`export!` 导出 Wasm Component 接口。这些是当前原型实际需要的入口代码。
+The task has no database connection or node-selection logic. It computes solely
+from its input and has no external side effects, so retrying it is safe.
 
-### 5. 客户端如何提交和等待
+#### Export the task as a Wasm Component
 
-完整代码在 [`examples/sort-client/src/main.rs`](examples/sort-client/src/main.rs)。它先保存分片，再提交任务：
+The worker invokes a named function through the component ABI. The guest routes
+`sort_chunk` to the typed task:
 
 ```rust
-let object = store.put(serde_json::to_vec(chunk)?).await?;
-store.submit(TaskSpec {
-    id: id.clone(),
-    module: module.clone(),
-    function: "sort_chunk".into(),
-    input: Input::Object(object),
-    max_attempts: 3,
-    notify: None,
-}).await?;
+struct SortGuest;
+
+impl Guest for SortGuest {
+    fn task(name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {
+        match name.as_str() {
+            "sort_chunk" => run_task::<SortChunk>(&input),
+            _ => Err(format!("unknown task: {name}")),
+        }
+    }
+
+    fn handle(_: String, _: Vec<u8>, _: Vec<u8>) -> Result<Vec<u8>, String> {
+        Err("this component only exports tasks".into())
+    }
+}
+
+export!(SortGuest with_types_in loom_guest_sdk::bindings);
 ```
 
-`module` 是部署后得到的 Wasm 模块引用。所有分片都提交之后，客户端轮询 `store.task(&id)`；完成时得到 `TaskOutcome::Succeeded(object)`，再通过 `store.get(&object)` 读取有序分片。
+`Guest::task` is the byte-oriented entry point. `run_task::<SortChunk>` bridges it
+to the typed Rust implementation. `export!` exposes the WIT interface. The shared
+interface also has an actor entry point, `handle`; this task-only component returns
+an error if that entry point is called.
 
-**不要提交一片就立即等待那一片完成**，否则客户端会把可并行的工作串行化。
+The Dockerfile compiles this crate for `wasm32-unknown-unknown`, then packages it
+with `loom component`. Workers load the resulting component by its content digest.
 
-这里使用当前已实现的 `TaskSpec` / `TaskOutcome` 接口。排序函数只依赖 `&dyn Backend`，其中包括任务与对象存储接口；PostgreSQL 适配器只在客户端 `main` 入口组装，排序算法不依赖 SQL。
+### 5. Submit all chunks before waiting
 
-归并使用最小堆，从每个分片取当前最小值，复杂度为 `O(N log K)`，其中 `K` 是分片数。普通批处理不需要 Actor 或 Flow。
+The client saves the component and receives an immutable module reference:
 
-### 6. 确认任务确实在节点上执行
+```rust
+let module = store.put(std::fs::read(&args.component)?).await?;
+```
 
-将报告中的 `run` 值替换进下面命令：
+The sorting function accepts `&dyn Backend`. For each input chunk, it stores the
+serialized integers and submits a task referring to that object:
+
+```rust
+for (index, chunk) in input.chunks(chunk_size).enumerate() {
+    let object = store.put(serde_json::to_vec(chunk)?).await?;
+    let id = format!("{run}-{index}");
+    store
+        .submit(TaskSpec {
+            id: id.clone(),
+            module: module.clone(),
+            function: "sort_chunk".into(),
+            input: Input::Object(object),
+            max_attempts: 3,
+            notify: None,
+        })
+        .await?;
+    ids.push(id);
+}
+```
+
+Each field controls a concrete part of execution:
+
+| Field | Purpose |
+| --- | --- |
+| `id` | Stable identity for this logical task across execution attempts |
+| `module` | Reference to the uploaded sorting Wasm Component |
+| `function` | Name matched by `Guest::task` |
+| `Input::Object(object)` | Reference to the serialized chunk; the worker resolves it before calling the guest |
+| `max_attempts: 3` | Allow up to three attempts in total, including the first |
+| `notify: None` | No actor completion notification; this client polls task status |
+
+An `ObjectRef` identifies immutable stored bytes. It does not represent an
+in-progress computation. The task ID is what the client uses to track execution;
+a successful task eventually produces an output `ObjectRef`.
+
+**Submit every chunk before waiting for completion.** Each `submit().await` waits
+for the submission to be recorded, not for sorting to finish. Workers can execute
+already-submitted chunks while the client submits the rest. Waiting for a result
+inside this loop would serialize the workload.
+
+### 6. Collect results and handle failures
+
+The client polls outstanding task IDs. This is the result-handling branch inside
+its polling loop:
+
+```rust
+let status = store.task(&id).await?;
+match status.outcome {
+    Some(TaskOutcome::Succeeded(object)) => {
+        let chunk: Vec<i64> =
+            serde_json::from_slice(&store.get(&object).await?)?;
+        ensure!(
+            chunk.windows(2).all(|w| w[0] <= w[1]),
+            "unsorted shard: {id}"
+        );
+        completed.push(serde_json::json!({
+            "id": id,
+            "attempts": status.attempts,
+            "output": object.digest,
+        }));
+        chunks.push(chunk);
+    }
+    Some(TaskOutcome::Failed(error)) => bail!("task {id} failed: {error}"),
+    None => pending.push(id),
+}
+```
+
+`None` means no terminal outcome is available. The client keeps that ID in the
+pending set and waits 100 ms between polling rounds. A success returns a reference;
+`store.get` fetches its bytes, and the client decodes the sorted chunk. A terminal
+failure stops the operation with the task ID and error.
+
+The client wraps submission and collection in a 120-second timeout, configurable
+with `--timeout-seconds 300`. A timeout ends the client's wait; it does not cancel
+submitted tasks. If a worker disappears before committing a result, the task can
+be claimed again after its lease expires, within its attempt budget. Committed
+results remain in the backend. This example client does not implement resumable
+orchestration after a client crash.
+
+### 7. Merge the sorted chunks
+
+The client performs a k-way merge using a min-heap. Rust's `BinaryHeap` is a
+max-heap, so wrapping each tuple in `Reverse` makes the smallest value come first:
+
+```rust
+fn merge(chunks: Vec<Vec<i64>>) -> Vec<i64> {
+    let mut heap = BinaryHeap::new();
+    let mut output = Vec::with_capacity(chunks.iter().map(Vec::len).sum());
+    for (shard, chunk) in chunks.iter().enumerate() {
+        if let Some(&value) = chunk.first() {
+            heap.push(Reverse((value, shard, 0)));
+        }
+    }
+    while let Some(Reverse((value, shard, index))) = heap.pop() {
+        output.push(value);
+        if let Some(&next) = chunks[shard].get(index + 1) {
+            heap.push(Reverse((next, shard, index + 1)));
+        }
+    }
+    output
+}
+```
+
+The heap holds the next available element from each nonempty chunk. After taking
+the smallest element, the algorithm advances only that element's chunk. Chunk
+completion order does not matter. Duplicates remain separate elements, and empty
+input yields an empty result.
+
+For `N` integers across `K` chunks, merging costs `O(N log K)` time and uses up to
+`O(K)` heap entries. The example keeps all chunk data and the output in client
+memory, so total client memory is `O(N)`.
+
+Finally, the client compares the merged array with a local reference sort and
+stores the verified array with `store.put`, producing the report's final `output`
+reference. The reference sort is part of this tutorial's validation and adds local
+work; it is not a distributed performance benchmark.
+
+#### Keep application logic independent of PostgreSQL
+
+The sorting function's storage dependency is an interface:
+
+```rust
+async fn distributed_sort(
+    store: &dyn Backend,
+    module: ObjectRef,
+    input: &[i64],
+    chunk_size: usize,
+    run: &str,
+) -> Result<(Vec<i64>, Vec<serde_json::Value>)>
+```
+
+`Backend` combines the execution, object-storage, and membership contracts. Only
+`main` selects the concrete adapter:
+
+```rust
+let store = loom_backend_postgres::connect(&args.database_url, &args.namespace).await?;
+```
+
+Replacing that adapter does not require changing the sorting algorithm. Clients
+and workers must still use a compatible backend and the same namespace. The guest
+has no storage dependency at all. This batch computation uses tasks and object
+references; it needs no persistent actor state.
+
+### 8. Inspect execution and modify the example
+
+Use the report's full `run` value to find this run in worker logs:
 
 ```sh
-dc logs --no-color node-a node-b | grep 'sort-你的运行标识'
+# Replace RUN_ID with the full value, including the sort- prefix.
+dc logs --no-color node-a node-b | grep 'RUN_ID'
 ```
 
-日志中的容器前缀标明执行节点，`COMMIT task:sort-...` 表示任务结果已提交。默认 16 分片示例通常能看到两个节点都执行任务；很小的输入可能全部被一个节点领取。
+Container prefixes identify the workers. `COMMIT task:sort-...` means a task result
+was committed. The default 16-task example usually uses both workers; a small input
+may be handled entirely by one.
 
-如果程序一直等待，先检查节点和任务状态：
+If the client keeps waiting, inspect workers and an individual task:
 
 ```sh
 dc ps
@@ -171,18 +365,17 @@ dc logs --tail 30 node-a node-b
 dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" task TASK_ID
 ```
 
-客户端默认等待最多 120 秒，可用 `--timeout-seconds 300` 调整。超时只结束客户端等待，已提交任务仍可能继续执行。节点中断后，尚未提交结果的任务在租约到期后可以重试，最多 3 次；已提交结果保存在后端。客户端本身没有断点续跑功能。
-
-### 7. 修改代码，再运行
-
-修改 Rust 源码后执行：
+After editing the Rust example, rebuild and run it again:
 
 ```sh
 dc --profile tools build node-a
 dc --profile tools run --rm -T sort
 ```
 
-排序客户端和 Wasm 都来自新镜像。现有节点会按新的模块 digest 加载 Wasm，因此仅修改排序示例时不需要重启节点。如果修改的是宿主运行时，停止节点、等待原来的 5 秒注册租约过期，再重建：
+The new image contains the updated client and component. Existing workers load
+the component by its new digest, so changes to the example do not require worker
+restarts. If you change the host runtime, stop the workers and let their five-second
+registration leases expire before replacing them:
 
 ```sh
 dc stop node-a node-b
@@ -190,21 +383,35 @@ sleep 6
 dc up -d --wait node-a node-b
 ```
 
-### 适用范围
+### Scope and verification
 
-这是学习 Loom 提交任务和传递结果的示例：**分片排序分布执行，最终归并在客户端内存中完成**。客户端会保留输入、分片、结果及验证用副本，内存需求为 `O(N)`，不适合直接用于超大文件的外部排序。
+**Chunk sorting runs on distributed workers; final merging runs in client memory.**
+The client retains the input, sorted chunks, output, and a verification copy. This
+example is intended for learning task execution and result handling, not for sorting
+files larger than client memory.
 
-示例将每片限制在 1–1,000 个整数，以适应当前 Wasm 的燃料和载荷限制。输入、输出和任务记录会保留在 PostgreSQL 中，原型尚无自动清理。当前后端仍会串行更新同一 namespace 的任务账本，所以这个例子不用于证明相对本地排序的加速比。
+Chunk size is limited to 1–1,000 integers to fit the current Wasm fuel and payload
+limits. Inputs, outputs, and task records remain in PostgreSQL; automatic cleanup
+is not implemented. The reference backend serializes ledger updates within a
+namespace, so this example makes no claim of speedup over local sorting.
 
-用完可以停止环境并保留数据：
+Stop the environment while retaining its database volume:
 
 ```sh
 dc down
 ```
 
-自动验收脚本：`scripts/local-env.sh python3 scripts/sort_acceptance.py`。它会验证默认数据、自定义输入、空数组、重复值和整数边界，并检查默认运行的任务是否由两个节点执行。
+Run the external acceptance harness:
 
-这套步骤已在当前双节点 Compose 环境中通过验证，详见[验收记录](docs/sort-verification.md)。
+```sh
+scripts/local-env.sh python3 scripts/sort_acceptance.py
+```
+
+It compares complete results with Python's `sorted` for the default input, custom
+input, an empty array, duplicates, and integer boundaries. It also checks that both
+workers committed tasks from the default run and that invalid input is rejected.
+These checks passed in the local two-worker Compose environment; see the
+[verification record](docs/sort-verification.md).
 
 ## Docker Compose
 
