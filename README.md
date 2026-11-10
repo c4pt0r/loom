@@ -37,6 +37,15 @@ Sorting verifies its result against a local reference sort. Word count runs
 partitioned map/reduce using hash shuffle. Worker concurrency is configurable
 with `loom node --slots N` (default: 1).
 
+## Interactive CLI
+
+```sh
+dc --profile tools run --rm cli --namespace lab repl
+```
+
+Submit tasks, inspect nodes and actors, and read results from an interactive
+prompt. Start with `help`; see the [REPL guide](docs/repl.md) for a sorting walkthrough.
+
 ## Dashboard
 
 Inspect nodes, task status, failures, actor state, and results at **http://127.0.0.1:8787**:

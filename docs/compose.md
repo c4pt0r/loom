@@ -8,7 +8,7 @@
 | `node-a` | Rust host, one slot by default, node ID `node-a` | yes |
 | `node-b` | Rust host, one slot by default, node ID `node-b` | yes |
 | `dashboard` | Read-only web console, loopback port 8787 | `dashboard` profile |
-| `cli` | One-shot CLI, bundled Wasm component | `tools` profile |
+| `cli` | One-shot CLI or interactive REPL, bundled Wasm components | `tools` profile |
 | `sort` | Rust distributed-sort client and bundled sorting Wasm | `tools` profile |
 | `word-count` | Rust word-count driver and bundled counting Wasm | `tools` profile |
 | `tests` | Linux Rust test binaries, PostgreSQL/Wasm integration, demo | `tests` profile |
@@ -52,7 +52,8 @@ credentials when supplying your own DSN. To inspect the database:
 docker compose exec postgres psql -U loom -d loom
 ```
 
-See the [dashboard guide](dashboard.md) to inspect this cluster in a browser.
+See the [dashboard guide](dashboard.md) to inspect this cluster in a browser, or
+the [REPL guide](repl.md) to submit and inspect work interactively.
 
 ## Run the Rust/Wasm actor
 

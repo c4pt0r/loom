@@ -1,3 +1,6 @@
+mod client;
+mod repl;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use loom_contracts::*;
@@ -19,14 +22,9 @@ enum Command {
     /// Compile the bundled Rust guest and encode its Wasm component.
     Build,
     /// Encode a Rust guest core module containing WIT metadata into a component.
-    Component {
-        input: PathBuf,
-        output: PathBuf,
-    },
+    Component { input: PathBuf, output: PathBuf },
     /// Run the complete research/approval demo in a volatile local backend.
-    Demo {
-        component: PathBuf,
-    },
+    Demo { component: PathBuf },
     /// Register and poll a shared durable backend with bounded execution slots.
     Node {
         #[arg(long)]
@@ -41,51 +39,10 @@ enum Command {
         #[arg(long, default_value = "127.0.0.1:8787")]
         bind: std::net::SocketAddr,
     },
-    Deploy {
-        component: PathBuf,
-    },
-    /// Upload immutable input data and print its object digest.
-    Put {
-        path: PathBuf,
-    },
-    CreateActor {
-        id: String,
-        module: String,
-        #[arg(long, default_value = "research")]
-        handler: String,
-        #[arg(long, default_value = "{} ")]
-        state: String,
-    },
-    Send {
-        actor: String,
-        #[arg(long)]
-        id: String,
-        payload: String,
-    },
-    Actor {
-        id: String,
-    },
-    Submit {
-        id: String,
-        module: String,
-        function: String,
-        #[arg(default_value = "null")]
-        input: String,
-        #[arg(long)]
-        dependency: Option<String>,
-        #[arg(long, default_value_t = 1)]
-        attempts: u32,
-    },
-    Task {
-        id: String,
-    },
-    Receipt {
-        job: String,
-    },
-    Get {
-        digest: String,
-    },
-    Members,
+    /// Open an interactive client (type help for commands).
+    Repl,
+    #[command(flatten)]
+    Client(client::ClientCommand),
 }
 fn session(node: &str) -> NodeSession {
     NodeSession {
@@ -150,6 +107,7 @@ async fn main() -> Result<()> {
         .await?;
         return Ok(());
     }
+    let inspector: Arc<dyn InspectionStore> = postgres.clone();
     // Default adapters share Postgres; an independent ObjectStore can be supplied here.
     let backend: Arc<dyn Backend> = Arc::new(Stores::new(postgres.clone(), postgres));
     match cli.command {
@@ -173,83 +131,15 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
-        Command::Deploy { component } => {
-            println!("{}", backend.put(std::fs::read(component)?).await?.digest)
-        }
-        Command::Put { path } => {
-            println!("{}", backend.put(std::fs::read(path)?).await?.digest)
-        }
-        Command::CreateActor {
-            id,
-            module,
-            handler,
-            state,
-        } => {
-            serde_json::from_str::<serde_json::Value>(&state).context("state must be JSON")?;
-            backend
-                .create_actor(ActorSpec {
-                    id,
-                    module: ObjectRef::new(module),
-                    handler,
-                    initial_state: state.into_bytes(),
-                    supervisor: Supervisor::default(),
-                })
+        Command::Client(command) => {
+            let result = client::Client { backend, inspector }
+                .execute(command)
                 .await?;
+            if !result.text.is_empty() {
+                println!("{}", result.text);
+            }
         }
-        Command::Send { actor, id, payload } => {
-            serde_json::from_str::<serde_json::Value>(&payload).context("payload must be JSON")?;
-            backend
-                .send(Envelope {
-                    actor,
-                    id,
-                    payload: payload.into_bytes(),
-                })
-                .await?;
-        }
-        Command::Actor { id } => {
-            let a = backend.actor(&id).await?;
-            let state: serde_json::Value = serde_json::from_slice(&a.state)?;
-            println!(
-                "{}",
-                serde_json::json!({"id":a.spec.id,"revision":a.revision,"state":state})
-            );
-        }
-        Command::Submit {
-            id,
-            module,
-            function,
-            input,
-            dependency,
-            attempts,
-        } => {
-            let input = match dependency {
-                Some(id) => Input::TaskResult(id),
-                None => {
-                    serde_json::from_str::<serde_json::Value>(&input)?;
-                    Input::Inline(input.into_bytes())
-                }
-            };
-            backend
-                .submit(TaskSpec {
-                    id,
-                    module: ObjectRef::new(module),
-                    function,
-                    input,
-                    output: loom_contracts::TaskOutput::Value,
-                    max_attempts: attempts,
-                    notify: None,
-                })
-                .await?;
-        }
-        Command::Task { id } => println!("{}", serde_json::to_string(&backend.task(&id).await?)?),
-        Command::Receipt { job } => {
-            println!("{}", serde_json::to_string(&backend.receipt(&job).await?)?)
-        }
-        Command::Get { digest } => println!(
-            "{}",
-            String::from_utf8(backend.get(&ObjectRef::new(digest)).await?)?
-        ),
-        Command::Members => println!("{}", serde_json::to_string(&backend.members().await?)?),
+        Command::Repl => repl::run(client::Client { backend, inspector }, &cli.namespace).await?,
         _ => unreachable!(),
     }
     Ok(())
