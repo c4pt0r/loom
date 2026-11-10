@@ -4,10 +4,31 @@
     {
       "case": "default",
       "total_words": 16000,
-      "task_count": 16,
-      "run": "word-count-9108c37e-47fd-4c66-930c-64642656fff8",
-      "output": "67def30fb16b3e4ebfc0e2b8c75e56e18d3d06a312e93de5363b691e79789673",
-      "workers": [
+      "map_task_count": 16,
+      "reduce_task_count": 4,
+      "run": "word-count-e185c5c4-630f-46f0-8889-54d0cf4ab912",
+      "output": "3d4a38b945d2838cff695e5591a25317d794b15580d4b942ef34871a722bfe9d",
+      "map_workers": [
+        "node-a",
+        "node-b"
+      ],
+      "reduce_workers": [
+        "node-a",
+        "node-b"
+      ]
+    },
+    {
+      "case": "parallel reducers",
+      "total_words": 50000,
+      "map_task_count": 100,
+      "reduce_task_count": 4,
+      "run": "word-count-f53d933d-5c04-42ee-afd8-c95c1b48928e",
+      "output": "2690ff7952dc3561de68e047da83144c7350504fef380d92cf9ad62bae3190f3",
+      "map_workers": [
+        "node-a",
+        "node-b"
+      ],
+      "reduce_workers": [
         "node-a",
         "node-b"
       ]
@@ -15,51 +36,61 @@
     {
       "case": "custom",
       "total_words": 5,
-      "task_count": 3,
-      "run": "word-count-2872a86d-8950-4616-8fa9-ab6c1d6f308b",
-      "output": "81e270e79fce484ef4cdcd8020e2893adccf2981499f7f64c6411dfdc79e3cb5"
+      "map_task_count": 3,
+      "reduce_task_count": 4,
+      "run": "word-count-d2939f39-13e8-485d-8336-f14a38614566",
+      "output": "ec446b7abed3721a9cbc16fa040b676c5732e980f968d65c88333a8b0e076cca"
     },
     {
       "case": "empty",
       "total_words": 0,
-      "task_count": 0,
-      "run": "word-count-7256382a-02d8-4647-a3fc-8bfc797127b1",
-      "output": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      "map_task_count": 0,
+      "reduce_task_count": 4,
+      "run": "word-count-4c82dc26-8185-403d-8f1c-a046a67fb72f",
+      "output": "ab236bd1f61ea483ff3f1fdd29b85c68b43578ae6148573ba53675fd850a2191"
     },
     {
       "case": "whitespace",
       "total_words": 0,
-      "task_count": 0,
-      "run": "word-count-acd001d7-4b88-4926-aff8-9b685045bc7b",
-      "output": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      "map_task_count": 0,
+      "reduce_task_count": 4,
+      "run": "word-count-391f7bc9-5305-4f8c-99f4-14e70f6a33c3",
+      "output": "ab236bd1f61ea483ff3f1fdd29b85c68b43578ae6148573ba53675fd850a2191"
     },
     {
       "case": "case and punctuation",
       "total_words": 6,
-      "task_count": 3,
-      "run": "word-count-3127e0b8-026e-4020-8de8-7e1490958439",
-      "output": "18d3c79a387056ab21d5d93cbe7cad571f5cb568180e7894c2ac28b18d1568db"
+      "map_task_count": 3,
+      "reduce_task_count": 4,
+      "run": "word-count-beddb3a0-1ff0-40a3-bb5b-bf8b1f75a604",
+      "output": "03e3688fe97ce42ff5afac96582abbafe17b037a955f774a20bab116b69df3d6"
     },
     {
       "case": "Unicode whitespace and tokens",
       "total_words": 7,
-      "task_count": 4,
-      "run": "word-count-ae786826-2111-4fde-9564-7bdba9062a3b",
-      "output": "bd9166bd23a2fcbb825272e285f50a3750c2b8e58af08b3ad2101903d215d70b"
+      "map_task_count": 4,
+      "reduce_task_count": 4,
+      "run": "word-count-4bba1f19-35b4-467f-9d9d-79b3181ee6fd",
+      "output": "35c304383725bb1859282beb4d9670470547b1bcf59ab7abdd79104be06949aa"
     },
     {
       "case": "cross-chunk counts",
       "total_words": 148,
-      "task_count": 22,
-      "run": "word-count-df8f520f-c034-49ee-a9c2-b2ef832094b3",
-      "output": "14d353a066cd7d45e2d6461f31d77804c6f11c8eeb4f3fc5f8e3eb2b9076ec97"
+      "map_task_count": 22,
+      "reduce_task_count": 4,
+      "run": "word-count-0f07148f-8815-41fa-bd31-4ce7675e51a9",
+      "output": "4750888d408ddaf56c28bef4971d6bf63345348370820e538c5440672bd84bee"
     },
     {
       "case": "byte-limited chunks",
       "total_words": 12,
-      "task_count": 3,
-      "run": "word-count-efdef3d2-53d6-4f3a-825a-000aaa952cd6",
-      "output": "7f05dfe24aa1cd6f767fbb1d70549347beed13ce61074e807bb2fd88cd65c2f3"
+      "map_task_count": 3,
+      "reduce_task_count": 4,
+      "run": "word-count-53301b68-4529-4aa5-acb7-cf2923b0c520",
+      "output": "b8b8bdf205886a54170857f4dc621362302899cdde5825de2787318f549c60bc"
+    },
+    {
+      "case": "metadata-only driver and single reducer"
     },
     {
       "case": "oversized words, invalid chunk sizes, and invalid UTF-8 rejected"

@@ -29,6 +29,7 @@ mod tests {
             module: ObjectRef::new("module".into()),
             function: "identity".into(),
             input: Input::Inline(b"1".to_vec()),
+            output: loom_contracts::TaskOutput::Value,
             max_attempts: 2,
             notify: None,
         }
@@ -75,6 +76,7 @@ mod tests {
         invalid.tasks.push(TaskIntent {
             function: "identity".into(),
             input: Input::Inline(b"1".to_vec()),
+            output: loom_contracts::TaskOutput::Value,
             max_attempts: 1,
             notify_self: true,
         });
@@ -137,6 +139,7 @@ mod tests {
             tasks: vec![TaskIntent {
                 function: "identity".into(),
                 input: Input::Inline(b"result".to_vec()),
+                output: loom_contracts::TaskOutput::Value,
                 max_attempts: 2,
                 notify_self: true,
             }],

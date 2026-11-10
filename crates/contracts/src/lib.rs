@@ -44,6 +44,79 @@ pub enum Input {
     Inline(Bytes),
     Object(ObjectRef),
     TaskResult(Id),
+    /// Wait for mapper results, then fold only this partition on the worker.
+    Shuffle {
+        sources: Vec<ShuffleSource>,
+        layout: ShuffleLayout,
+        partition: u32,
+    },
+}
+
+pub const MAX_SHUFFLE_PARTITIONS: u32 = 256;
+pub const MAX_SHUFFLE_SOURCES: usize = 1024;
+
+/// Protocol v1: SHA-256(key bytes), first eight bytes as big-endian u64, modulo partitions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShuffleLayout {
+    pub partitions: u32,
+}
+impl ShuffleLayout {
+    pub fn validate(&self) -> Result<()> {
+        if self.partitions == 0 || self.partitions > MAX_SHUFFLE_PARTITIONS {
+            return Err(Error::Invalid("shuffle partitions must be 1..256".into()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ShuffleSource {
+    TaskResult(Id),
+    Manifest(ObjectRef),
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TaskOutput {
+    #[default]
+    Value,
+    Shuffle(ShuffleLayout),
+}
+
+/// Keys are canonical application-defined bytes; values are opaque serialized bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShuffleRecord {
+    pub key: Bytes,
+    pub value: Bytes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShuffleBlock {
+    pub object: ObjectRef,
+    pub records: u32,
+    pub bytes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShuffleManifest {
+    pub version: u32,
+    pub layout: ShuffleLayout,
+    /// Index is the partition ID; empty partitions have no blocks.
+    pub partitions: Vec<Vec<ShuffleBlock>>,
+}
+
+/// Final partitioned result. Entries are reducer outputs in partition-index order.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PartitionedDataset {
+    pub version: u32,
+    pub layout: ShuffleLayout,
+    pub partitions: Vec<ObjectRef>,
+}
+
+/// Worker-to-guest fold invocation. The state is local to one reducer attempt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReduceFrame {
+    pub state: Option<Bytes>,
+    pub records: Vec<ShuffleRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,6 +149,8 @@ pub struct TaskSpec {
     pub module: ObjectRef,
     pub function: String,
     pub input: Input,
+    #[serde(default)]
+    pub output: TaskOutput,
     /// Retries are opt-in; external effects require their own idempotency.
     pub max_attempts: u32,
     pub notify: Option<Id>,
@@ -85,6 +160,8 @@ pub struct TaskSpec {
 pub struct TaskIntent {
     pub function: String,
     pub input: Input,
+    #[serde(default)]
+    pub output: TaskOutput,
     pub max_attempts: u32,
     pub notify_self: bool,
 }

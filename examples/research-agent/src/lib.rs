@@ -71,6 +71,7 @@ impl Actor for Research {
                 tasks.push(TaskIntent {
                     function: "analyze".into(),
                     input: Input::Inline(encode(&doc)?),
+                    output: TaskOutput::Value,
                     max_attempts: 2,
                     notify_self: true,
                 });

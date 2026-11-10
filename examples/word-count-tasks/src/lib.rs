@@ -1,18 +1,37 @@
-use loom_guest_sdk::{Guest, Task, export, run_task};
+use loom_guest_sdk::{
+    Guest, Reducer, ShuffleRecord, Task, decode, export, record, run_reducer, run_task,
+};
 use std::collections::BTreeMap;
 
 struct CountWords;
 
 impl Task for CountWords {
     type Input = String;
-    type Output = BTreeMap<String, u64>;
+    type Output = Vec<ShuffleRecord>;
 
     fn run(text: String) -> Result<Self::Output, String> {
-        let mut counts = BTreeMap::new();
+        let mut counts = BTreeMap::<String, u64>::new();
         for word in text.split_whitespace() {
             *counts.entry(word.to_owned()).or_insert(0) += 1;
         }
-        Ok(counts)
+        counts
+            .into_iter()
+            .map(|(key, value)| record(key.as_bytes(), &value))
+            .collect()
+    }
+}
+
+struct SumCounts;
+impl Reducer for SumCounts {
+    type State = BTreeMap<String, u64>;
+    fn fold(mut state: Self::State, records: Vec<ShuffleRecord>) -> Result<Self::State, String> {
+        for record in records {
+            let word = String::from_utf8(record.key).map_err(|e| e.to_string())?;
+            let count: u64 = decode(&record.value)?;
+            let total = state.entry(word).or_default();
+            *total = total.checked_add(count).ok_or("word count overflow")?;
+        }
+        Ok(state)
     }
 }
 
@@ -22,6 +41,7 @@ impl Guest for WordCountGuest {
     fn task(name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {
         match name.as_str() {
             "count_words" => run_task::<CountWords>(&input),
+            "sum_counts" => run_reducer::<SumCounts>(&input),
             _ => Err(format!("unknown task: {name}")),
         }
     }

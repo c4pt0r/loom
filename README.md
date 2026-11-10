@@ -10,7 +10,7 @@ machine that fans out analysis, aggregates results, waits for approval, and resu
 after restart.
 
 Examples: [Sorting](#quickstart-distributed-sorting-with-rust-and-loom) ·
-[Word count](#quickstart-distributed-word-count)
+[Word count](#quickstart-distributed-word-count) · [Shuffle protocol](docs/shuffle.md)
 
 ## Quickstart: distributed sorting with Rust and Loom
 
@@ -222,6 +222,7 @@ for (index, chunk) in input.chunks(chunk_size).enumerate() {
             module: module.clone(),
             function: "sort_chunk".into(),
             input: Input::Object(object),
+            output: TaskOutput::Value,
             max_attempts: 3,
             notify: None,
         })
@@ -424,206 +425,246 @@ These checks passed in the local two-worker Compose environment; see the
 
 ## Quickstart: distributed word count
 
-Count word frequencies with Rust tasks running as Wasm on Loom workers. This
-example follows a simple map/reduce pattern: workers count words in separate text
-chunks, and a native Rust driver adds the partial counts together.
+Run Map, shuffle, and Reduce on Loom workers. Each mapper counts its own text
+chunk, the host partitions records by key, and reducers independently add the
+counts for their partitions. The driver submits the graph and returns references
+to the final partitions; it does not merge intermediate results.
 
 ### Run the example
 
-From the repository root, build the image and start two workers:
+From the repository root, build and start the environment. If upgrading from the
+older example, stop both workers and let their registration leases expire before
+starting the new host binaries:
 
 ```sh
 dc() { scripts/local-env.sh docker compose "$@"; }
-dc --profile tools build node-a
-dc up -d --wait --no-recreate postgres node-a node-b
-dc --profile tools run --rm -T word-count
+dc --profile tests build node-a tests
+dc stop node-a node-b
+sleep 6
+dc up -d --wait postgres node-a node-b
+dc --profile tools run --rm -T word-count --reducers 4
 ```
 
-The default input repeats `hello loom hello wasm` 4,000 times. The driver submits
-16 tasks and prints a JSON report containing:
+Do not run old workers alongside new ones in the same namespace: old hosts cannot
+interpret shuffle inputs. PostgreSQL data is retained through the upgrade. Compose
+uses the standard DSN `postgresql://loom:loom-local-only@postgres:5432/loom`.
+
+The default input repeats `hello loom hello wasm` 4,000 times. The program submits
+**16 Map tasks and 4 Reduce tasks**. Its JSON report includes:
+
+| Field | Meaning |
+| --- | --- |
+| `total_words` | Input token count: 16,000 |
+| `map_task_count` / `reduce_task_count` | 16 / 4 |
+| `output` | ObjectRef digest of the final partitioned-dataset manifest |
+| `partitions` | Final reducer output references, in partition-index order |
+| `map_tasks` / `reduce_tasks` | Task IDs, attempts, and committed output digests |
+| `run` | Unique run ID for logs |
+
+The default driver fetches no intermediate or final data blocks. To display the
+completed counts, explicitly request the final partitions:
+
+```sh
+dc --profile tools run --rm -T word-count --reducers 4 --print-result
+```
+
+The report then also includes `counts` and `unique_words`:
 
 ```json
-{
-  "total_words": 16000,
-  "unique_words": 3,
-  "task_count": 16,
-  "counts": {"hello": 8000, "loom": 4000, "wasm": 4000}
-}
+{"hello": 8000, "loom": 4000, "wasm": 4000}
 ```
 
-The actual report also includes a unique `run` ID, per-task IDs and attempt counts,
-and an `output` digest referencing the saved frequency map.
+`--print-result` concatenates already-reduced, disjoint key maps. It does not sum
+Map results locally and rejects duplicate keys across final partitions.
 
-To supply your own input, use plain UTF-8 text, not JSON:
+Supply your own plain UTF-8 input:
 
 ```sh
 printf 'hello loom hello\nwasm loom\n' |
-  dc --profile tools run --rm -T word-count --stdin --chunk-words 2
+  dc --profile tools run --rm -T word-count --stdin --chunk-words 2 --reducers 4 --print-result
+
+# Or read a text file:
+dc --profile tools run --rm -T word-count --stdin --reducers 4 < book.txt
 ```
 
-This creates three tasks and returns `{"hello": 2, "loom": 2, "wasm": 1}` in
-`counts`. Read a text file using the same option:
+The small example creates three Maps and four Reducers and returns
+`{"hello": 2, "loom": 2, "wasm": 1}`. Every run has new task IDs.
 
-```sh
-dc --profile tools run --rm -T word-count --stdin < book.txt
-```
-
-Compose supplies the standard URI DSN
-`postgresql://loom:loom-local-only@postgres:5432/loom`. The driver and workers use
-the same backend and namespace. Existing workers can load the new component without
-restarting; the image build packages the driver and Wasm component together.
-
-### Source layout and execution
-
-| Source | Role |
-| --- | --- |
-| [`examples/word-count/src/main.rs`](examples/word-count/src/main.rs) | Native application entry point: read text, submit work, collect and merge counts |
-| [`examples/word-count-tasks/src/lib.rs`](examples/word-count-tasks/src/lib.rs) | Wasm task: count words in one chunk |
+### Who reads which data?
 
 ```text
-word-count driver
-  text -> split at word boundaries -> store input objects -> submit tasks
-                                                            |
-                                              +-------------+-------------+
-                                              |                           |
-                                       node-a: count_words         node-b: count_words
-                                              |                           |
-                                              +----- result ObjectRefs ---+
-                                                            |
-  final frequency map <- add counts by word <- fetch partial maps
+Driver: split text and submit tasks
+
+input chunk A -> Mapper A -> A0 A1 A2 A3
+input chunk B -> Mapper B -> B0 B1 B2 B3
+                              |
+                       shared object storage
+                              |
+        +-------------+-------+-------+-------------+
+        |             |               |             |
+    Reducer 0     Reducer 1       Reducer 2     Reducer 3
+    reads A0 B0   reads A1 B1     reads A2 B2   reads A3 B3
+        |             |               |             |
+     output 0      output 1        output 2      output 3
 ```
 
-The driver is an application executable, not a client SDK. It uses the public
-`Backend` interfaces. Only `main` constructs the PostgreSQL adapter; the counting
-task has no database dependency or ambient filesystem/network access.
+The driver decides the input-to-task mapping. Nodes atomically claim eligible
+tasks, so any worker may act as a mapper or reducer. Each mapper reads only its
+assigned input object. Each reducer reads manifests from all mappers, but data
+blocks only for its own partition. No mapper scans the entire original input.
 
-### Map: count one text chunk in Rust
+The example driver still reads the complete original text and splits it locally.
+Source-level file/object range splitting is separate from shuffle and is not yet
+implemented. The original text does not need to be read again for Reduce.
 
-The guest defines typed input and output through the `Task` trait:
+### Map: emit typed values under byte keys
+
+The guest code is in
+[`examples/word-count-tasks/src/lib.rs`](examples/word-count-tasks/src/lib.rs).
+It first combines repeated words within one chunk, then emits records:
 
 ```rust
-struct CountWords;
-
 impl Task for CountWords {
     type Input = String;
-    type Output = BTreeMap<String, u64>;
+    type Output = Vec<ShuffleRecord>;
 
     fn run(text: String) -> Result<Self::Output, String> {
-        let mut counts = BTreeMap::new();
+        let mut counts = BTreeMap::<String, u64>::new();
         for word in text.split_whitespace() {
             *counts.entry(word.to_owned()).or_insert(0) += 1;
         }
-        Ok(counts)
+        counts.into_iter()
+            .map(|(key, value)| record(key.as_bytes(), &value))
+            .collect()
     }
 }
 ```
 
-Each map entry counts one exact token. `BTreeMap` gives deterministic key ordering,
-which also makes the serialized result stable. The component's `Guest::task`
-implementation dispatches the function name `count_words` to
-`run_task::<CountWords>(&input)`. That SDK helper decodes the JSON string, calls the
-Rust task, and encodes its map as JSON. `export!` exposes the WIT component ABI.
+`record` preserves the UTF-8 key bytes and serializes the `u64` value. The generic
+shuffle layer does not know these records represent words or counts.
 
-Rust-to-Wasm compilation happens during `docker compose build`. At runtime the
-driver uploads that component through `store.put`; workers fetch it by digest and
-Wasmtime compiles it for the worker's CPU.
+The driver declares `output: TaskOutput::Shuffle(layout.clone())` on each Map
+`TaskSpec`. That tells the host to partition the returned records using
+`big_endian_u64(SHA256(key)[0:8]) % partition_count`, publish immutable blocks, and
+commit a manifest reference. It replaces the ordinary single-value output mode.
 
-### Submit chunks without splitting words
+The Rust guest is compiled to Wasm during image build and uploaded at runtime.
+Wasm functions are dispatched by `Guest::task`: `count_words` calls
+`run_task::<CountWords>`, and `sum_counts` calls `run_reducer::<SumCounts>`.
 
-`split_chunks` walks `text.split_whitespace()` and builds strings containing at
-most `--chunk-words` tokens, with an additional 16 KiB UTF-8 byte limit. It inserts
-one space between tokens. Normalizing separators this way preserves token identity
-and counts. A single token larger than 16 KiB is rejected before any task is submitted.
+### Submit reducers before the maps finish
 
-For each chunk, the driver saves the input and submits a task:
+The Rust entry point is
+[`examples/word-count/src/main.rs`](examples/word-count/src/main.rs). After
+submitting all Maps, it submits one reducer per partition:
 
 ```rust
-let object = store.put(serde_json::to_vec(chunk)?).await?;
-store
-    .submit(TaskSpec {
-        id: id.clone(),
-        module: module.clone(),
-        function: "count_words".into(),
-        input: Input::Object(object),
-        max_attempts: 3,
-        notify: None,
-    })
-    .await?;
+let sources = map_ids.iter().cloned()
+    .map(ShuffleSource::TaskResult).collect::<Vec<_>>();
+
+store.submit(TaskSpec {
+    id,
+    module: module.clone(),
+    function: "sum_counts".into(),
+    input: Input::Shuffle {
+        sources: sources.clone(),
+        layout: layout.clone(),
+        partition,
+    },
+    output: TaskOutput::Value,
+    max_attempts: 3,
+    notify: None,
+}).await?;
 ```
 
-`module` references the uploaded Wasm component. `object` references the chunk's
-JSON bytes; the worker resolves it before invoking the guest. Task IDs contain a
-unique run ID and chunk index. All chunks are submitted before the driver waits
-for results, allowing the workers to process them concurrently.
+The execution backend waits until every Map has committed its manifest. A pending
+reducer consumes no attempt. If any Map fails terminally, its dependent reducers
+fail without running. Once ready, the claim resolves upstream task IDs to immutable
+manifest references. The worker then fetches its selected partition blocks.
 
-Submission does not choose a worker. Available nodes claim tasks from the shared
-backend, so placement and the number of tasks per node can vary.
+The application's orchestration function depends on `&dyn Backend`; PostgreSQL
+is selected only in `main`. Task and storage interfaces remain implementation-independent.
 
-### Reduce: add each completed map exactly once in the driver
+### Reduce: fold blocks on a worker
 
-The driver polls `store.task(&id)`. On `TaskOutcome::Succeeded(object)`, it loads
-the partial map and adds its counts:
+The guest defines the accumulator and how to consume one block:
 
 ```rust
-let partial: Counts = serde_json::from_slice(&store.get(&object).await?)?;
-for (word, count) in partial {
-    let total = totals.entry(word).or_default();
-    *total = total.checked_add(count).context("word count overflow")?;
+impl Reducer for SumCounts {
+    type State = BTreeMap<String, u64>;
+
+    fn fold(mut state: Self::State, records: Vec<ShuffleRecord>)
+        -> Result<Self::State, String>
+    {
+        for record in records {
+            let word = String::from_utf8(record.key).map_err(|e| e.to_string())?;
+            let count: u64 = decode(&record.value)?;
+            let total = state.entry(word).or_default();
+            *total = total.checked_add(count).ok_or("word count overflow")?;
+        }
+        Ok(state)
+    }
 }
 ```
 
-`Counts` is an alias for `BTreeMap<String, u64>`. The checked addition detects
-integer overflow. A completed task is removed from the pending set after its map
-is merged, so subsequent polling does not add the same task again. Two distinct
-chunks may produce the same content digest; each chunk still contributes once.
+The host invokes this fold once per block, passing the previous encoded state into
+the next call. It never fetches another partition's data. An empty partition gets
+one empty fold call and produces `{}`. Only the final state is committed. A retry
+starts the whole partition from an empty accumulator, so partially accumulated
+counts are not counted twice.
 
-Addition is independent of task completion order. If a task reaches a terminal
-failure, the driver exits with its ID and error. Pure counting tasks allow up to
-three attempts. The default 120-second timeout can be changed with
-`--timeout-seconds`; a driver timeout does not cancel submitted tasks.
+No driver process holds the reduction state. All reducers can execute independently
+once their inputs are ready, and task leases permit takeover on another worker.
 
-The driver checks that the sum of all returned counts equals the input token count,
-then stores the final map through `store.put`. To retrieve it later:
+### Read the final dataset
+
+The `output` digest now points to a `PartitionedDataset`, not one global word map:
+
+```text
+{ version: 1, layout: { partitions: 4 }, partitions: [ObjectRef, ...] }
+```
+
+Fetch the manifest, then any final partition you need:
 
 ```sh
-# Replace OUTPUT_DIGEST with the report's output value.
 dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" get OUTPUT_DIGEST
+dc --profile tools run --rm -T cli --namespace "${LOOM_NAMESPACE:-lab}" get PARTITION_DIGEST
 ```
 
-### Counting rules and limits
+The driver publishes this small dataset manifest after all reducers succeed. It
+has no resumable submission workflow; if it exits, already-submitted tasks can
+continue and remain queryable, but you may need to recover their IDs to assemble
+the final dataset manifest.
 
-- Words are separated by Unicode whitespace, including spaces, tabs, and newlines.
-- Matching is case-sensitive: `Loom` and `loom` are different words.
-- Punctuation is retained: `loom` and `loom,` are different words.
-- Unicode text is preserved without normalization or language-specific segmentation.
-  For example, Chinese text without whitespace is one token.
-- Empty or whitespace-only input produces an empty map and submits no tasks.
+### Rules, limits, and verification
 
-`--chunk-words` accepts 1–1,000. Chunk counting runs on workers, while final reduction
-runs in the driver. The driver reads the full input and holds the global frequency
-map in memory; this is not an external-memory or distributed-shuffle implementation.
-Its reduction state does not survive a driver crash. Task results and final output
-objects remain in the backend, which currently has no automatic cleanup.
+Words are separated by Unicode whitespace. Matching is case-sensitive, punctuation
+is retained, and Unicode text is not normalized or language-segmented. `Loom`,
+`loom`, and `loom,` are distinct keys. Empty input submits no Maps, but still runs
+one empty reducer per requested partition.
 
-### Inspect and verify
+The example accepts 1–1,000 words per chunk, a 16 KiB text chunk limit, at most
+1,024 chunks, and 1–256 reducers. Encoded records must also fit a 64 KiB shuffle
+block. The reducer accumulator and each serialized invocation must fit the
+runtime's payload/memory limits. There is no spill-to-disk or automatic hot-key
+splitting. PostgreSQL remains the shared storage bottleneck.
 
-Use the report's complete `run` value to inspect worker execution:
+The default client timeout is 120 seconds; change it with `--timeout-seconds`.
+Timeout does not cancel submitted tasks. Inputs, blocks, and results remain stored;
+automatic garbage collection is not implemented.
+
+Inspect execution or run independent verification:
 
 ```sh
-# Replace RUN_ID with the full word-count-... value.
+# Replace RUN_ID with the complete word-count-... identifier.
 dc logs --no-color node-a node-b | grep 'RUN_ID'
-```
-
-Run the independent acceptance harness against the running two-worker environment:
-
-```sh
 scripts/local-env.sh python3 scripts/word_count_acceptance.py
 ```
 
-It checks full frequency maps, persisted outputs, default execution on both workers,
-empty input, punctuation and case, Unicode whitespace, repeated words across chunks,
-byte-limited chunks, and invalid inputs. See the
-[verification record](docs/word-count-verification.md) for recorded results.
+The harness checks final frequency maps, per-key partition ownership, actual Map
+block hashes, persisted partitioned results, and both Map and Reduce execution on
+two nodes. See the [shuffle protocol](docs/shuffle.md) and
+[verification record](docs/word-count-verification.md) for semantics and coverage.
 
 ## Docker Compose
 
@@ -752,7 +793,8 @@ Wasmtime host ─── runtime orchestration
 ```
 
 - `contracts`: persistence, membership, blob storage and guest-engine interfaces.
-- `runtime`: claim → execute → publish object → commit. No DB or Wasmtime dependency.
+- `runtime`: claim → execute → publish object → commit; block-by-block shuffle reduction. No DB or Wasmtime dependency.
+- `shuffle`: deterministic key partitioning, immutable blocks, manifests, and validation.
 - `wasm-host`: component cache; fresh isolated instance per turn; fuel and memory limits.
 - `backend-core`: reference transition implementation used only by the adapters.
 - `backend-memory`: volatile storage and injectable clock.

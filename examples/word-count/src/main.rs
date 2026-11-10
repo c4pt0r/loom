@@ -1,13 +1,16 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use loom_contracts::{Backend, BlobStore, Input, ObjectRef, TaskOutcome, TaskSpec};
+use loom_contracts::{
+    Backend, BlobStore, Input, MAX_SHUFFLE_SOURCES, ObjectRef, PartitionedDataset, ShuffleLayout,
+    ShuffleSource, TaskOutcome, TaskOutput, TaskSpec,
+};
 use std::{collections::BTreeMap, io::Read, path::PathBuf, time::Duration};
 
 const MAX_CHUNK_BYTES: usize = 16 * 1024;
 type Counts = BTreeMap<String, u64>;
 
 #[derive(Parser)]
-#[command(about = "Count whitespace-separated words on Loom workers and merge frequencies")]
+#[command(about = "Count words using distributed maps, hash shuffle, and partition reducers")]
 struct Args {
     #[arg(long, env = "LOOM_DATABASE_URL")]
     database_url: String,
@@ -21,6 +24,12 @@ struct Args {
     /// Maximum words per task. Chunks also have a 16 KiB UTF-8 byte limit.
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=1000))]
     chunk_words: u32,
+    /// Number of independently reduced hash partitions.
+    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=256))]
+    reducers: u32,
+    /// Download final partitions for display; never downloads intermediate map results.
+    #[arg(long)]
+    print_result: bool,
     #[arg(long, default_value_t = 120)]
     timeout_seconds: u64,
 }
@@ -53,57 +62,103 @@ fn split_chunks(text: &str, chunk_words: usize) -> Result<Vec<String>> {
     Ok(chunks)
 }
 
-/// Application orchestration depends on contracts; SQL is confined to the adapter.
+/// Submit the graph without loading intermediate data or performing reduction.
 async fn word_count(
     store: &dyn Backend,
     module: ObjectRef,
     chunks: &[String],
+    layout: &ShuffleLayout,
     run: &str,
-) -> Result<(Counts, Vec<serde_json::Value>)> {
-    let mut remaining = Vec::new();
+) -> Result<(
+    PartitionedDataset,
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+)> {
+    let mut map_ids = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
         let object = store.put(serde_json::to_vec(chunk)?).await?;
-        let id = format!("{run}-{index}");
+        let id = format!("{run}-map-{index}");
         store
             .submit(TaskSpec {
                 id: id.clone(),
                 module: module.clone(),
                 function: "count_words".into(),
                 input: Input::Object(object),
+                output: TaskOutput::Shuffle(layout.clone()),
                 max_attempts: 3,
                 notify: None,
             })
             .await?;
-        remaining.push(id);
+        map_ids.push(id);
     }
-    eprintln!("Submitted {} tasks (run: {run})", remaining.len());
-    let mut totals = Counts::new();
-    let mut completed = Vec::new();
-    while !remaining.is_empty() {
-        let mut pending = Vec::new();
-        for id in remaining {
-            let status = store.task(&id).await?;
-            match status.outcome {
-                Some(TaskOutcome::Succeeded(object)) => {
-                    let partial: Counts = serde_json::from_slice(&store.get(&object).await?)?;
-                    for (word, count) in partial {
-                        let total = totals.entry(word).or_default();
-                        *total = total.checked_add(count).context("word count overflow")?;
-                    }
-                    completed.push(serde_json::json!({
-                        "id": id, "attempts": status.attempts, "output": object.digest,
-                    }));
-                }
-                Some(TaskOutcome::Failed(error)) => bail!("task {id} failed: {error}"),
-                None => pending.push(id),
+    let sources = map_ids
+        .iter()
+        .cloned()
+        .map(ShuffleSource::TaskResult)
+        .collect::<Vec<_>>();
+    let mut reduce_ids = Vec::new();
+    for partition in 0..layout.partitions {
+        let id = format!("{run}-reduce-{partition}");
+        store
+            .submit(TaskSpec {
+                id: id.clone(),
+                module: module.clone(),
+                function: "sum_counts".into(),
+                input: Input::Shuffle {
+                    sources: sources.clone(),
+                    layout: layout.clone(),
+                    partition,
+                },
+                output: TaskOutput::Value,
+                max_attempts: 3,
+                notify: None,
+            })
+            .await?;
+        reduce_ids.push(id);
+    }
+    eprintln!(
+        "Submitted {} maps + {} reducers (run: {run})",
+        map_ids.len(),
+        reduce_ids.len()
+    );
+    let mut outputs = vec![None; reduce_ids.len()];
+    while outputs.iter().any(Option::is_none) {
+        for (partition, id) in reduce_ids.iter().enumerate() {
+            if outputs[partition].is_some() {
+                continue;
+            }
+            match store.task(id).await?.outcome {
+                Some(TaskOutcome::Succeeded(reference)) => outputs[partition] = Some(reference),
+                Some(TaskOutcome::Failed(error)) => bail!("reducer {id} failed: {error}"),
+                None => (),
             }
         }
-        remaining = pending;
-        if !remaining.is_empty() {
+        if outputs.iter().any(Option::is_none) {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
-    Ok((totals, completed))
+    let mut maps = Vec::new();
+    let mut reducers = Vec::new();
+    for (ids, reports) in [(&map_ids, &mut maps), (&reduce_ids, &mut reducers)] {
+        for id in ids {
+            let task = store.task(id).await?;
+            let Some(TaskOutcome::Succeeded(output)) = task.outcome else {
+                bail!("task {id} did not succeed");
+            };
+            reports.push(
+                serde_json::json!({"id": id, "attempts": task.attempts, "output": output.digest}),
+            );
+        }
+    }
+    Ok((
+        PartitionedDataset {
+            version: 1,
+            layout: layout.clone(),
+            partitions: outputs.into_iter().map(Option::unwrap).collect(),
+        },
+        maps,
+        reducers,
+    ))
 }
 
 #[tokio::main]
@@ -120,31 +175,49 @@ async fn main() -> Result<()> {
     };
     // Validate and split before submitting any work.
     let chunks = split_chunks(&text, args.chunk_words as usize)?;
+    ensure!(
+        chunks.len() <= MAX_SHUFFLE_SOURCES,
+        "example supports at most 1024 map chunks"
+    );
     let expected_total = text.split_whitespace().count() as u64;
+    let layout = ShuffleLayout {
+        partitions: args.reducers,
+    };
     let store = loom_backend_postgres::connect(&args.database_url, &args.namespace).await?;
     let module = store.put(std::fs::read(&args.component)?).await?;
     let run = format!("word-count-{}", uuid::Uuid::new_v4());
-    let (counts, tasks) = tokio::time::timeout(
+    let (dataset, maps, reducers) = tokio::time::timeout(
         Duration::from_secs(args.timeout_seconds),
-        word_count(&store, module, &chunks, &run),
+        word_count(&store, module, &chunks, &layout, &run),
     )
     .await
     .context("timed out; submitted tasks are not cancelled")??;
-    let total_words = counts.values().try_fold(0_u64, |sum, count| {
-        sum.checked_add(*count).context("total word count overflow")
-    })?;
-    ensure!(
-        total_words == expected_total,
-        "word total differs from input"
-    );
-    let output = store.put(serde_json::to_vec(&counts)?).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "run": run, "total_words": total_words, "unique_words": counts.len(),
-            "task_count": tasks.len(), "counts": counts, "output": output.digest,
-            "tasks": tasks,
-        }))?
-    );
+    let output = store.put(serde_json::to_vec(&dataset)?).await?;
+    let mut report = serde_json::json!({
+        "run": run, "total_words": expected_total,
+        "map_task_count": maps.len(), "reduce_task_count": reducers.len(),
+        "task_count": maps.len() + reducers.len(), "output": output.digest,
+        "partitions": dataset.partitions, "map_tasks": maps, "reduce_tasks": reducers,
+    });
+    if args.print_result {
+        // Optional presentation only: concatenate disjoint FINAL key maps, never sum them.
+        let mut counts = Counts::new();
+        for reference in &dataset.partitions {
+            let part: Counts = serde_json::from_slice(&store.get(reference).await?)?;
+            for (word, count) in part {
+                ensure!(
+                    counts.insert(word, count).is_none(),
+                    "key appears in multiple final partitions"
+                );
+            }
+        }
+        let total = counts.values().try_fold(0_u64, |sum, n| {
+            sum.checked_add(*n).context("total overflow")
+        })?;
+        ensure!(total == expected_total, "word total differs from input");
+        report["unique_words"] = counts.len().into();
+        report["counts"] = serde_json::to_value(counts)?;
+    }
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }

@@ -815,6 +815,7 @@ dependencies = [
  "loom-backend-postgres",
  "loom-contracts",
  "loom-runtime",
+ "loom-shuffle",
  "loom-wasm-host",
  "serde_json",
  "tokio",
@@ -861,7 +862,18 @@ name = "loom-runtime"
 version = "0.1.0"
 dependencies = [
  "loom-contracts",
+ "loom-shuffle",
  "tokio",
+]
+
+[[package]]
+name = "loom-shuffle"
+version = "0.1.0"
+dependencies = [
+ "loom-contracts",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

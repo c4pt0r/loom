@@ -93,6 +93,7 @@ async fn publication_and_renewal_must_progress_concurrently() {
             module: ObjectRef::new("mock".into()),
             function: "echo".into(),
             input: Input::Inline(b"result".to_vec()),
+            output: loom_contracts::TaskOutput::Value,
             max_attempts: 1,
             notify: None,
         })

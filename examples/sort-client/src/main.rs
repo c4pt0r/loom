@@ -46,6 +46,7 @@ async fn distributed_sort(
                 module: module.clone(),
                 function: "sort_chunk".into(),
                 input: Input::Object(object),
+                output: loom_contracts::TaskOutput::Value,
                 max_attempts: 3,
                 notify: None,
             })

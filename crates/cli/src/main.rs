@@ -203,6 +203,7 @@ async fn main() -> Result<()> {
                     module: ObjectRef::new(module),
                     function,
                     input,
+                    output: loom_contracts::TaskOutput::Value,
                     max_attempts: attempts,
                     notify: None,
                 })

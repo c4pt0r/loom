@@ -70,3 +70,14 @@ capability token. The prototype assumes trusted host callers and controlled modu
 Deferred: ActorRef/ask client ergonomics, cancellation, hierarchical supervision,
 ephemeral actors, module hot upgrade, stream/channel primitives, component capability
 imports, storage sharding, object GC, authentication and TLS.
+
+## Partitioned shuffle
+
+Task outputs default to `TaskOutput::Value`. `TaskOutput::Shuffle(layout)` publishes
+a versioned manifest after all immutable partition blocks have been written.
+`Input::Shuffle` can reference multiple committed mapper tasks; claim resolves
+these dependencies atomically and rejects incompatible layouts or duplicate task
+IDs. A worker folds only its assigned partition, with one block plus accumulator
+per invocation. See [shuffle.md](shuffle.md) for the protocol, validation, retry
+semantics, and bounded resource limits. No Flow or database-specific application
+interface is introduced.

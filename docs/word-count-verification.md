@@ -1,50 +1,42 @@
-# Word count verification
+# Distributed shuffle Word Count verification
 
 Environment: local Colima Linux ARM64 VM, PostgreSQL 17, namespace `lab`, and
-workers `node-a` and `node-b`. The updated runtime image contains the native Rust
-word-count driver and the Rust-built Wasm Component. Existing workers loaded the
-new component without restarting.
+upgraded workers `node-a` and `node-b`. The driver, map task, and reducer task are
+Rust; both guest functions execute through Wasmtime on the workers.
 
-## Acceptance results
+## Application acceptance
+
+All eleven scenario groups in `scripts/word_count_acceptance.py` passed:
 
 | Scenario | Result |
 | --- | --- |
-| Default 16,000 words / 16 tasks | PASS; both workers committed tasks from this run |
-| Custom five-word input / three tasks | PASS; hello=2, loom=2, wasm=1 |
-| Empty input | PASS; empty map and zero tasks |
-| Whitespace-only input | PASS; empty map and zero tasks |
-| Case, punctuation, and apostrophes | PASS; exact-token semantics preserved |
-| Unicode whitespace and tokens | PASS; complete expected frequency map matched |
-| Repeated words across 22 chunks | PASS; every occurrence counted once |
-| Byte limit with long words | PASS; twelve 3,000-byte words split into three tasks |
-| Oversized word, invalid chunk sizes, invalid UTF-8 | PASS; rejected with nonzero exit status |
+| Default 16,000 words | PASS; 16 Maps + 4 Reducers |
+| 50,000 words, 500 distinct keys | PASS; 100 Maps + 4 Reducers; both workers executed both stages |
+| Custom five-word input | PASS; hello=2, loom=2, wasm=1 |
+| Empty input | PASS; zero Maps, four empty Reducers |
+| Whitespace-only input | PASS; empty final partitions |
+| Case, punctuation, apostrophes | PASS; exact-token semantics |
+| Unicode whitespace and tokens | PASS; expected frequency map |
+| Words repeated across 22 chunks | PASS; no missing or double-counted occurrences |
+| Byte-limited chunks | PASS; twelve 3,000-byte words split across three Maps |
+| Metadata-only driver, one reducer | PASS; no counts returned by default; stored partition is correct |
+| Invalid input | PASS; oversized words, chunk/partition bounds, and invalid UTF-8 rejected |
 
-For each successful case, the external Python harness checks the full map, total
-and distinct word counts, task count, and attempt count. It fetches the final
-object through `loom get` and compares that persisted map with the expected result.
-The default case matches exact task IDs against both workers' commit logs.
+For every successful case, the external Python harness verifies the complete
+frequency map, input total, distinct keys, map/reduce task counts, and one attempt
+per task. It fetches the saved `PartitionedDataset` and each final partition,
+checks key ownership using Python's SHA-256, and compares the union with independent
+expected counts.
 
-Machine-readable run IDs and result digests:
-[word-count-acceptance.json](word-count-acceptance.json).
+For the default run it additionally reads the actual mapper manifests and blocks,
+checks byte/record counts, and independently verifies every intermediate record's
+partition. Worker commit logs are matched to exact task IDs. The larger workload
+checks that both stages actually ran on both workers; small jobs may legally be
+claimed entirely by one node and have no fairness guarantee.
 
-## Other checks
+Machine-readable results: [word-count-acceptance.json](word-count-acceptance.json).
+Generic protocol/failure checks: [shuffle-verification.md](shuffle-verification.md).
 
-- `cargo fmt --all --check`: passed.
-- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
-- `cargo test --locked --workspace`: passed (eight memory contract tests, one
-  publication/renewal regression, and one generated binding doctest; two opt-in
-  tests ignored).
-- Compose configuration validation and runtime image build: passed.
-- Existing sorting acceptance harness: all six scenario groups passed with the
-  rebuilt image.
-
-The new acceptance scenarios exercise PostgreSQL and Wasm through the application.
-No throughput, multi-machine, or word-count crash-recovery claims are made. The
-final reduction runs in the driver's memory; worker task execution is distributed.
-
-Reproduce after building the image and starting the workers:
-
-```sh
-scripts/local-env.sh python3 scripts/word_count_acceptance.py --report docs/word-count-acceptance.json
-scripts/local-env.sh python3 scripts/sort_acceptance.py
-```
+The driver reads original text to make input chunks. Normal execution does not
+read intermediate or final data; `--print-result` fetches only final partitions for
+presentation. No throughput or multi-machine scaling claim is made.

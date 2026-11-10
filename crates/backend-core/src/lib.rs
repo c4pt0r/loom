@@ -136,10 +136,40 @@ impl Ledger {
                 Err(conflict("task ID reused with different input"))
             };
         }
-        if let Input::TaskResult(parent) = &s.input
-            && !self.jobs.contains_key(&task_job(parent))
-        {
-            return Err(Error::NotFound(parent.clone()));
+        if let TaskOutput::Shuffle(layout) = &s.output {
+            layout.validate()?;
+        }
+        match &s.input {
+            Input::TaskResult(parent) if !self.jobs.contains_key(&task_job(parent)) => {
+                return Err(Error::NotFound(parent.clone()));
+            }
+            Input::Shuffle {
+                sources,
+                layout,
+                partition,
+            } => {
+                layout.validate()?;
+                if *partition >= layout.partitions || sources.len() > MAX_SHUFFLE_SOURCES {
+                    return Err(invalid("invalid shuffle partition or too many sources"));
+                }
+                let mut seen = std::collections::BTreeSet::new();
+                for source in sources {
+                    if let ShuffleSource::TaskResult(parent) = source {
+                        if !seen.insert(parent) {
+                            return Err(invalid("duplicate shuffle task dependency"));
+                        }
+                        let job = self
+                            .jobs
+                            .get(&task_job(parent))
+                            .ok_or_else(|| Error::NotFound(parent.clone()))?;
+                        if !matches!(&job.kind, Kind::Task(t) if t.output == TaskOutput::Shuffle(layout.clone()))
+                        {
+                            return Err(invalid("shuffle source has incompatible output layout"));
+                        }
+                    }
+                }
+            }
+            _ => (),
         }
         self.enqueue(key, Kind::Task(s), now);
         Ok(())
@@ -263,6 +293,47 @@ impl Ledger {
                                     continue;
                                 }
                                 _ => continue,
+                            }
+                        }
+                        Input::Shuffle {
+                            sources,
+                            layout,
+                            partition,
+                        } => {
+                            let mut resolved = Vec::with_capacity(sources.len());
+                            let mut waiting = false;
+                            let mut failure = None;
+                            for source in sources {
+                                match source {
+                                    ShuffleSource::Manifest(r) => {
+                                        resolved.push(ShuffleSource::Manifest(r.clone()))
+                                    }
+                                    ShuffleSource::TaskResult(parent) => {
+                                        match self.jobs[&task_job(parent)].receipt.as_ref() {
+                                            Some(Receipt::Task(TaskOutcome::Succeeded(r))) => {
+                                                resolved.push(ShuffleSource::Manifest(r.clone()));
+                                            }
+                                            Some(Receipt::Task(TaskOutcome::Failed(e))) => {
+                                                failure = Some(format!(
+                                                    "shuffle dependency {parent} failed: {e}"
+                                                ));
+                                            }
+                                            _ => waiting = true,
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(reason) = failure {
+                                self.finish_failure(&id, reason, now)?;
+                                continue;
+                            }
+                            if waiting {
+                                continue;
+                            }
+                            Input::Shuffle {
+                                sources: resolved,
+                                layout: layout.clone(),
+                                partition: *partition,
                             }
                         }
                         other => other.clone(),
@@ -421,6 +492,7 @@ impl Ledger {
                                     module: module.clone(),
                                     function: intent.function.clone(),
                                     input: intent.input.clone(),
+                                    output: intent.output.clone(),
                                     max_attempts: intent.max_attempts,
                                     notify: intent.notify_self.then(|| m.actor.clone()),
                                 },

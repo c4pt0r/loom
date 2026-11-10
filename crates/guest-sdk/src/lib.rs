@@ -1,6 +1,7 @@
 //! Rust guest API. This ABI deliberately has no ambient filesystem/network/DB access.
 pub use loom_contracts::{
-    Decision, Input, ObjectRef, SendIntent, TaskCompleted, TaskIntent, TaskOutcome,
+    Decision, Input, ObjectRef, ReduceFrame, SendIntent, ShuffleRecord, TaskCompleted, TaskIntent,
+    TaskOutcome, TaskOutput,
 };
 pub use serde_json;
 pub mod bindings {
@@ -48,4 +49,26 @@ pub fn handle_actor<A: Actor>(state: &[u8], message: &[u8]) -> Result<Vec<u8>, S
         tasks: turn.tasks,
         sends: turn.sends,
     })
+}
+
+/// Emit an opaque value under an application-defined canonical key.
+pub fn record<T: serde::Serialize>(key: &[u8], value: &T) -> Result<ShuffleRecord, String> {
+    Ok(ShuffleRecord {
+        key: key.to_vec(),
+        value: encode(value)?,
+    })
+}
+
+/// A bounded fold invoked once per shuffle block. No effects or persistent local state.
+pub trait Reducer {
+    type State: Default + serde::Serialize + serde::de::DeserializeOwned;
+    fn fold(state: Self::State, records: Vec<ShuffleRecord>) -> Result<Self::State, String>;
+}
+pub fn run_reducer<R: Reducer>(input: &[u8]) -> Result<Vec<u8>, String> {
+    let frame: ReduceFrame = decode(input)?;
+    let state = match frame.state {
+        Some(bytes) => decode(&bytes)?,
+        None => R::State::default(),
+    };
+    encode(&R::fold(state, frame.records)?)
 }

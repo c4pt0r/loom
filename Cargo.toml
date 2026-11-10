@@ -28,6 +28,7 @@ loom-backend-core = { path = "crates/backend-core" }
 loom-backend-memory = { path = "crates/backend-memory" }
 loom-backend-postgres = { path = "crates/backend-postgres" }
 loom-runtime = { path = "crates/runtime" }
+loom-shuffle = { path = "crates/shuffle" }
 loom-wasm-host = { path = "crates/wasm-host" }
 loom-guest-sdk = { path = "crates/guest-sdk" }
 

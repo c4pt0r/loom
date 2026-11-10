@@ -1,4 +1,4 @@
-//! Execution orchestration. Depends only on contracts, never on storage adapters.
+//! Execution orchestration and shuffle folds. No storage adapter or Wasm engine dependency.
 use loom_contracts::*;
 use std::{sync::Arc, time::Duration};
 
@@ -17,19 +17,30 @@ impl Node {
     pub async fn execute(&self, claim: &Claim) -> Result<Completion> {
         match &claim.work {
             Work::Task { spec, input } => {
-                let input = match input {
-                    Input::Inline(bytes) => bytes.clone(),
-                    Input::Object(r) => self.store.get(r).await?,
-                    Input::TaskResult(_) => {
-                        return Err(Error::Invalid("unresolved task dependency".into()));
+                let bytes = match input {
+                    Input::Shuffle {
+                        sources,
+                        layout,
+                        partition,
+                    } => self.reduce(spec, sources, layout, *partition).await?,
+                    other => {
+                        let input = match other {
+                            Input::Inline(bytes) => bytes.clone(),
+                            Input::Object(r) => self.store.get(r).await?,
+                            _ => return Err(Error::Invalid("unresolved task dependency".into())),
+                        };
+                        self.engine
+                            .task(&spec.module, &spec.function, input)
+                            .await?
                     }
                 };
-                let bytes = self
-                    .engine
-                    .task(&spec.module, &spec.function, input)
-                    .await?;
-                // Publish the blob before committing its reference. Failed commit may leave an orphan.
-                let output = self.store.put(bytes).await?;
+                // Blobs are immutable; only the fenced commit publishes the output reference.
+                let output = match &spec.output {
+                    TaskOutput::Value => self.store.put(bytes).await?,
+                    TaskOutput::Shuffle(layout) => {
+                        loom_shuffle::publish(self.store.as_ref(), layout, &bytes).await?
+                    }
+                };
                 Ok(Completion::Task { output })
             }
             Work::Actor { snapshot, message } => {
@@ -46,6 +57,52 @@ impl Node {
                     expected_revision: snapshot.revision,
                     decision,
                 })
+            }
+        }
+    }
+    async fn reduce(
+        &self,
+        spec: &TaskSpec,
+        sources: &[ShuffleSource],
+        layout: &ShuffleLayout,
+        partition: u32,
+    ) -> Result<Bytes> {
+        layout.validate()?;
+        if partition >= layout.partitions || sources.len() > MAX_SHUFFLE_SOURCES {
+            return Err(Error::Invalid("invalid shuffle reducer input".into()));
+        }
+        let mut state = None;
+        for source in sources {
+            let ShuffleSource::Manifest(reference) = source else {
+                return Err(Error::Invalid("unresolved shuffle dependency".into()));
+            };
+            let manifest: ShuffleManifest =
+                loom_shuffle::decode(&self.store.get(reference).await?)?;
+            loom_shuffle::validate_manifest(&manifest, layout)?;
+            for block in &manifest.partitions[partition as usize] {
+                let records =
+                    loom_shuffle::read_block(self.store.as_ref(), block, layout, partition).await?;
+                let frame = loom_shuffle::encode(&ReduceFrame { state, records })?;
+                state = Some(
+                    self.engine
+                        .task(&spec.module, &spec.function, frame)
+                        .await?,
+                );
+            }
+        }
+        match state {
+            Some(bytes) => Ok(bytes),
+            None => {
+                self.engine
+                    .task(
+                        &spec.module,
+                        &spec.function,
+                        loom_shuffle::encode(&ReduceFrame {
+                            state: None,
+                            records: vec![],
+                        })?,
+                    )
+                    .await
             }
         }
     }

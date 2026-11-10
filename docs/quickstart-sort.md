@@ -208,6 +208,7 @@ for (index, chunk) in input.chunks(chunk_size).enumerate() {
             module: module.clone(),
             function: "sort_chunk".into(),
             input: Input::Object(object),
+            output: TaskOutput::Value,
             max_attempts: 3,
             notify: None,
         })
