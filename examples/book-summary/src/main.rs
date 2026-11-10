@@ -83,8 +83,10 @@ fn resolve_pi(path: &std::path::Path) -> Result<PathBuf> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let store =
+    let control =
         Arc::new(loom_backend_postgres::connect(&args.database_url, &args.namespace).await?);
+    let objects = loom_object_store_s3::configured(&args.namespace, control.clone())?;
+    let store = Arc::new(loom_contracts::Stores::new(control, objects));
     match args.command {
         Command::Submit {
             id,

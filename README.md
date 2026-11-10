@@ -15,7 +15,8 @@ host; durable actors coordinate work and retain state across worker restarts.
 
 Different actors and tasks can run concurrently. Actor state, message receipts,
 and outgoing work commit atomically. Storage and execution depend on interfaces;
-PostgreSQL is the current durable backend for coordination and objects.
+PostgreSQL handles coordination. Objects can use PostgreSQL (default), RustFS,
+or AWS S3 through the same interface.
 
 ## Quickstart
 
@@ -77,7 +78,7 @@ Loom is an experimental prototype. It supports durable actor state, task retries
 lease-based worker recovery, fenced commits, and object-range inputs. Uncommitted
 work can repeat; external model calls are not exactly-once.
 
-There is no S3 adapter, automatic object cleanup, capability-based scheduling,
+There is no automatic object cleanup, capability-based scheduling,
 or tenant authentication yet. The default PostgreSQL connection has no TLS.
 Wasm guests have no filesystem or network access. Native-equivalent performance
 and linear scaling have not been established by benchmarks.
@@ -87,6 +88,7 @@ and linear scaling have not been established by benchmarks.
 [Docker Compose](docs/compose.md) ·
 [Contracts](docs/contracts.md) ·
 [Object storage](docs/object-store.md) ·
+[RustFS and AWS S3](docs/s3.md) ·
 [Shuffle](docs/shuffle.md) ·
 [Concurrency and recovery](docs/multi-actor.md) ·
 [Coordination and input slices](docs/scaling-and-inputs.md)

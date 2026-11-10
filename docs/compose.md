@@ -55,6 +55,14 @@ docker compose exec postgres psql -U loom -d loom
 See the [dashboard guide](dashboard.md) to inspect this cluster in a browser, or
 the [REPL guide](repl.md) to submit and inspect work interactively.
 
+## RustFS or AWS S3 objects
+
+The base file defaults to PostgreSQL objects and passes S3 configuration and AWS
+credential environment variables to clients, workers, and the dashboard. The
+optional `compose.rustfs.yaml` adds a local RustFS service and bucket initializer.
+Run it as a separate project to keep existing PostgreSQL objects accessible in
+the original cluster. See [RustFS and AWS S3](s3.md) for complete commands.
+
 ## Run the Rust/Wasm actor
 
 For a task-only example, see the [distributed sorting Quickstart](quickstart-sort.md).

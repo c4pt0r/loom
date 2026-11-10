@@ -14,8 +14,8 @@ Large or reusable task data should use `Input::Object` and immutable references.
 ```text
 driver / worker ---- ControlStore ---- PostgreSQL coordination
        |
-       +------------ ObjectStore ---- PostgreSQL blobs (current default)
-                                      another shared object adapter (extension point)
+       +------------ ObjectStore ---- PostgreSQL blobs (default)
+                                      RustFS / AWS S3
 
 WasmEngine --------- ObjectStore      module loading only
 ```
@@ -29,6 +29,9 @@ The interface lives in `loom-contracts` and does not depend on a database or SDK
 pub trait ObjectStore: Send + Sync {
     async fn put(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get(&self, object: &ObjectRef) -> Result<Bytes>;
+    async fn size(&self, object: &ObjectRef) -> Result<u64> {
+        Ok(self.get(object).await?.len() as u64)
+    }
     async fn get_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
         slice_bytes(&self.get(object).await?, offset, length)
     }
@@ -67,14 +70,15 @@ let backend = Arc::new(Stores::new(control, objects));
 application code can retain their existing task APIs. It forwards membership and
 execution calls exclusively to `control`, and object calls exclusively to `objects`.
 
-The current CLI and examples explicitly construct the default configuration:
+The CLI, dashboard, and examples select a provider at their composition root:
 
 ```rust
 let postgres = Arc::new(loom_backend_postgres::connect(&dsn, &namespace).await?);
-let stores = Stores::new(postgres.clone(), postgres);
+let objects = loom_object_store_s3::configured(&namespace, postgres.clone())?;
+let stores = Stores::new(postgres, objects);
 ```
 
-Choosing a different object provider changes the second argument. Driver and all
+`LOOM_OBJECT_STORE=postgres|rustfs|s3` chooses the adapter. Driver and all
 workers must be configured with the same logical object store; an `ObjectRef`
 contains a digest, not an endpoint or credentials.
 
@@ -99,10 +103,10 @@ and real Wasm module execution using two worker sessions in one process. Tests
 also verify that modules, input/output bytes, and shuffle blocks do not leak into
 the coordination adapter's own blob storage.
 
-S3/MinIO, shared filesystem, multipart uploads, and streaming APIs are
-not implemented in this change. A future durable object provider must meet the
-same visibility and retention contract. The current CLI exposes the default
-PostgreSQL setup; provider selection is through Rust dependency injection.
+`loom-object-store-s3` implements AWS S3 and RustFS with SHA-256 keys,
+conditional creation, HEAD metadata, and native range reads. See the
+[RustFS and AWS S3 guide](s3.md) for configuration, deployment, and tests.
+Shared filesystems, multipart uploads, and streaming APIs are not implemented.
 
 ## Publication and cleanup
 
@@ -121,6 +125,6 @@ See [verification coverage](object-store-verification.md).
 ## Range reads
 
 `ObjectStore::get_range(object, offset, length)` supports exact byte-range inputs.
-Its default fallback preserves existing adapters; PostgreSQL and the object-only
+Its default fallback preserves existing adapters; PostgreSQL, RustFS/S3, and the object-only
 memory adapter override it. `Input::Object` remains a complete-object read. See
 [object slices](scaling-and-inputs.md) for examples, encoding rules, and limits.

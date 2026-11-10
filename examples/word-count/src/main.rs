@@ -211,7 +211,8 @@ async fn main() -> Result<()> {
     let postgres = std::sync::Arc::new(
         loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
     );
-    let store = loom_contracts::Stores::new(postgres.clone(), postgres);
+    let objects = loom_object_store_s3::configured(&args.namespace, postgres.clone())?;
+    let store = loom_contracts::Stores::new(postgres, objects);
     for chunk in &chunks {
         inputs.push(Input::Object(store.put(serde_json::to_vec(chunk)?).await?));
     }

@@ -1,0 +1,15 @@
+[package]
+name = "loom-object-store-s3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+loom-contracts.workspace = true
+async-trait.workspace = true
+sha2.workspace = true
+object_store = { version = "0.13.1", default-features = false, features = ["aws", "tls-webpki-roots"] }
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true

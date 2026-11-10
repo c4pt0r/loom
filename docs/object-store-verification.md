@@ -36,8 +36,9 @@ storage. The Compose examples use PostgreSQL for both storage roles.
   processed by 100 Maps and 4 Reducers across the two worker containers.
 - Sorting acceptance: all six scenario groups passed.
 
-No S3 adapter, object garbage collection, or multi-machine network fault behavior
-is claimed by these checks. The existing crash/recovery suite was not rerun for
+These original interface checks did not cover S3, object garbage collection, or
+multi-machine network faults. RustFS/S3 now has separate coverage described in
+the [S3 guide](s3.md#verification). The existing crash/recovery suite was not rerun for
 this interface change; its previous results are recorded in
 [shuffle verification](shuffle-verification.md).
 

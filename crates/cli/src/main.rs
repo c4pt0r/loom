@@ -95,11 +95,12 @@ async fn main() -> Result<()> {
         .database_url
         .context("set LOOM_DATABASE_URL or --database-url (demo uses memory)")?;
     let postgres = Arc::new(loom_backend_postgres::connect(&url, &cli.namespace).await?);
+    let objects = loom_object_store_s3::configured(&cli.namespace, postgres.clone())?;
     if let Command::Dashboard { bind } = cli.command {
         loom_dashboard::serve(
             loom_dashboard::Dashboard {
                 inspector: postgres.clone(),
-                objects: postgres,
+                objects,
                 namespace: cli.namespace,
             },
             bind,
@@ -108,8 +109,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let inspector: Arc<dyn InspectionStore> = postgres.clone();
-    // Default adapters share Postgres; an independent ObjectStore can be supplied here.
-    let backend: Arc<dyn Backend> = Arc::new(Stores::new(postgres.clone(), postgres));
+    // Coordination and objects have independent adapters.
+    let backend: Arc<dyn Backend> = Arc::new(Stores::new(postgres, objects));
     match cli.command {
         Command::Node {
             id,

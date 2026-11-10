@@ -1,0 +1,75 @@
+# Use a separate project: docker compose -p loom-rustfs -f compose.yaml -f compose.rustfs.yaml ...
+x-rustfs-client: &rustfs-client
+  LOOM_OBJECT_STORE: rustfs
+  LOOM_S3_BUCKET: loom
+  LOOM_S3_ENDPOINT: http://rustfs:9000
+  LOOM_S3_PREFIX: loom
+  LOOM_S3_FORCE_PATH_STYLE: "true"
+  LOOM_S3_ALLOW_HTTP: "true"
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: loom-local-access
+  AWS_SECRET_ACCESS_KEY: loom-local-secret-only
+  AWS_SESSION_TOKEN: ""
+
+x-rustfs-dependencies: &rustfs-dependencies
+  postgres:
+    condition: service_healthy
+  rustfs-init:
+    condition: service_completed_successfully
+
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.4
+    environment:
+      RUSTFS_ACCESS_KEY: loom-local-access
+      RUSTFS_SECRET_KEY: loom-local-secret-only
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+    volumes:
+      - rustfs-data:/data
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    healthcheck:
+      test: [CMD, curl, -f, -s, http://127.0.0.1:9000/health]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  rustfs-init:
+    image: amazon/aws-cli:2.31.30
+    environment: *rustfs-client
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket loom 2>/dev/null ||
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket loom
+    restart: "no"
+
+  node-a:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+  node-b:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+  dashboard:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+  cli:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+  sort:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+  word-count:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+  tests:
+    environment: *rustfs-client
+    depends_on: *rustfs-dependencies
+
+volumes:
+  rustfs-data:

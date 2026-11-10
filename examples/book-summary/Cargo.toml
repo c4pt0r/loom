@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+loom-object-store-s3.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true

@@ -9,6 +9,7 @@ name = "loom"
 path = "src/main.rs"
 
 [dependencies]
+loom-object-store-s3.workspace = true
 loom-contracts.workspace = true
 loom-backend-memory.workspace = true
 loom-backend-postgres.workspace = true
