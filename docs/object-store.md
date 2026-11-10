@@ -5,10 +5,10 @@ interfaces can be backed by different systems.
 
 | Interface | Responsibility | Default adapter |
 | --- | --- | --- |
-| `ControlStore` | Membership, leases, task scheduling, receipts, fencing, and durable actor state | PostgreSQL ledger |
+| `ControlStore` | Membership, leases, task scheduling, receipts, fencing, and durable actor state | PostgreSQL coordination rows |
 | `ObjectStore` | Wasm components, task input/output objects, shuffle blocks/manifests, and final datasets | PostgreSQL blobs |
 
-Small inline task inputs and actor state can still be part of the control ledger.
+Small inline task inputs and actor state can still be part of control records.
 Large or reusable task data should use `Input::Object` and immutable references.
 
 ```text
@@ -29,6 +29,9 @@ The interface lives in `loom-contracts` and does not depend on a database or SDK
 pub trait ObjectStore: Send + Sync {
     async fn put(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get(&self, object: &ObjectRef) -> Result<Bytes>;
+    async fn get_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
+        slice_bytes(&self.get(object).await?, offset, length)
+    }
 }
 ```
 
@@ -96,7 +99,7 @@ and real Wasm module execution using two worker sessions in one process. Tests
 also verify that modules, input/output bytes, and shuffle blocks do not leak into
 the coordination adapter's own blob storage.
 
-S3/MinIO, shared filesystem, range reads, multipart uploads, and streaming APIs are
+S3/MinIO, shared filesystem, multipart uploads, and streaming APIs are
 not implemented in this change. A future durable object provider must meet the
 same visibility and retention contract. The current CLI exposes the default
 PostgreSQL setup; provider selection is through Rust dependency injection.
@@ -114,3 +117,10 @@ shuffle manifests. An external lifecycle rule must not expire still-referenced
 objects. Objects currently remain stored indefinitely.
 
 See [verification coverage](object-store-verification.md).
+
+## Range reads
+
+`ObjectStore::get_range(object, offset, length)` supports exact byte-range inputs.
+Its default fallback preserves existing adapters; PostgreSQL and the object-only
+memory adapter override it. `Input::Object` remains a complete-object read. See
+[object slices](scaling-and-inputs.md) for examples, encoding rules, and limits.

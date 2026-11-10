@@ -74,4 +74,7 @@ impl ObjectStore for Stores {
     async fn get(&self, object: &ObjectRef) -> Result<Bytes> {
         self.objects.get(object).await
     }
+    async fn get_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
+        self.objects.get_range(object, offset, length).await
+    }
 }

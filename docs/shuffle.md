@@ -194,7 +194,7 @@ This is a bounded first implementation:
   fuel limits still apply per invocation.
 - There is no spill-to-disk accumulator, key sorting, automatic skew handling,
   backpressure-aware producer streaming, or object garbage collection yet.
-- Backend metadata updates still serialize on one namespace ledger row.
+- PostgreSQL uses per-job records and skip-locked claims; storage remains shared.
 
 In Hash mode, a hot key can dominate a partition. More partitions do not split one
 key; skew requires application-side combining/salting or a later multi-stage

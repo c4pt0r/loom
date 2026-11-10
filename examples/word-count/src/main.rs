@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
 use loom_contracts::{
-    Backend, Input, MAX_SHUFFLE_SOURCES, ObjectRef, ObjectStore, PartitionedDataset, ShuffleLayout,
-    ShuffleSource, TaskOutcome, TaskOutput, TaskSpec,
+    Backend, Input, MAX_SHUFFLE_SOURCES, ObjectRef, ObjectSlice, ObjectStore, PartitionedDataset,
+    ShuffleLayout, ShuffleSource, TaskOutcome, TaskOutput, TaskSpec,
 };
 use std::{collections::BTreeMap, io::Read, path::PathBuf, time::Duration};
 
@@ -19,8 +19,14 @@ struct Args {
     #[arg(long, default_value = "/opt/loom/word-count.component.wasm")]
     component: PathBuf,
     /// Read plain UTF-8 text instead of the bundled 16,000-word sample.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["input_slices", "input_object"])]
     stdin: bool,
+    /// JSON array of byte-range references into raw UTF-8 objects. Ranges must end between words.
+    #[arg(long, conflicts_with = "input_object")]
+    input_slices: Option<PathBuf>,
+    /// Existing complete raw UTF-8 object; no source download by the driver.
+    #[arg(long)]
+    input_object: Option<String>,
     /// Maximum words per task. Chunks also have a 16 KiB UTF-8 byte limit.
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=1000))]
     chunk_words: u32,
@@ -66,7 +72,8 @@ fn split_chunks(text: &str, chunk_words: usize) -> Result<Vec<String>> {
 async fn word_count(
     store: &dyn Backend,
     module: ObjectRef,
-    chunks: &[String],
+    inputs: &[Input],
+    function: &str,
     layout: &ShuffleLayout,
     run: &str,
 ) -> Result<(
@@ -75,15 +82,14 @@ async fn word_count(
     Vec<serde_json::Value>,
 )> {
     let mut map_ids = Vec::new();
-    for (index, chunk) in chunks.iter().enumerate() {
-        let object = store.put(serde_json::to_vec(chunk)?).await?;
+    for (index, input) in inputs.iter().enumerate() {
         let id = format!("{run}-map-{index}");
         store
             .submit(TaskSpec {
                 id: id.clone(),
                 module: module.clone(),
-                function: "count_words".into(),
-                input: Input::Object(object),
+                function: function.into(),
+                input: input.clone(),
                 output: TaskOutput::Shuffle(layout.clone()),
                 max_attempts: 3,
                 notify: None,
@@ -164,33 +170,56 @@ async fn word_count(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let text = if args.stdin {
-        let mut text = String::new();
-        std::io::stdin()
-            .read_to_string(&mut text)
-            .context("stdin must be valid UTF-8")?;
-        text
+    // Reference-based modes inspect only the supplied manifest, not source payloads.
+    let mut inputs = Vec::new();
+    let mut chunks = Vec::new();
+    let mut expected_total = None;
+    let function = if let Some(path) = &args.input_slices {
+        let slices: Vec<ObjectSlice> = serde_json::from_slice(&std::fs::read(path)?)?;
+        for slice in slices {
+            slice.validate()?;
+            ensure!(
+                slice.length <= MAX_CHUNK_BYTES as u64,
+                "a word-count slice exceeds 16 KiB"
+            );
+            inputs.push(Input::ObjectSlice(slice));
+        }
+        "count_words_text"
+    } else if let Some(digest) = &args.input_object {
+        inputs.push(Input::Object(ObjectRef::new(digest.clone())));
+        "count_words_text"
     } else {
-        "hello loom hello wasm\n".repeat(4000)
+        let text = if args.stdin {
+            let mut text = String::new();
+            std::io::stdin()
+                .read_to_string(&mut text)
+                .context("stdin must be valid UTF-8")?;
+            text
+        } else {
+            "hello loom hello wasm\n".repeat(4000)
+        };
+        chunks = split_chunks(&text, args.chunk_words as usize)?;
+        expected_total = Some(text.split_whitespace().count() as u64);
+        "count_words"
     };
-    // Validate and split before submitting any work.
-    let chunks = split_chunks(&text, args.chunk_words as usize)?;
     ensure!(
-        chunks.len() <= MAX_SHUFFLE_SOURCES,
+        inputs.len() + chunks.len() <= MAX_SHUFFLE_SOURCES,
         "example supports at most 1024 map chunks"
     );
-    let expected_total = text.split_whitespace().count() as u64;
     // Equal words must meet at one reducer; random redistribution is the default elsewhere.
     let layout = ShuffleLayout::hash(args.reducers);
     let postgres = std::sync::Arc::new(
         loom_backend_postgres::connect(&args.database_url, &args.namespace).await?,
     );
     let store = loom_contracts::Stores::new(postgres.clone(), postgres);
+    for chunk in &chunks {
+        inputs.push(Input::Object(store.put(serde_json::to_vec(chunk)?).await?));
+    }
     let module = store.put(std::fs::read(&args.component)?).await?;
     let run = format!("word-count-{}", uuid::Uuid::new_v4());
     let (dataset, maps, reducers) = tokio::time::timeout(
         Duration::from_secs(args.timeout_seconds),
-        word_count(&store, module, &chunks, &layout, &run),
+        word_count(&store, module, &inputs, function, &layout, &run),
     )
     .await
     .context("timed out; submitted tasks are not cancelled")??;
@@ -216,7 +245,10 @@ async fn main() -> Result<()> {
         let total = counts.values().try_fold(0_u64, |sum, n| {
             sum.checked_add(*n).context("total overflow")
         })?;
-        ensure!(total == expected_total, "word total differs from input");
+        if let Some(expected) = expected_total {
+            ensure!(total == expected, "word total differs from input");
+        }
+        report["total_words"] = total.into();
         report["unique_words"] = counts.len().into();
         report["counts"] = serde_json::to_value(counts)?;
     }

@@ -88,9 +88,9 @@ tasks, so any worker may act as a mapper or reducer. Each mapper reads only its
 assigned input object. Each reducer reads manifests from all mappers, but data
 blocks only for its own partition. No mapper scans the entire original input.
 
-The example driver still reads the complete original text and splits it locally.
-Source-level file/object range splitting is separate from shuffle and is not yet
-implemented. The original text does not need to be read again for Reduce.
+The sample and stdin modes split text locally. Existing raw objects can instead
+use `--input-slices slices.json` or `--input-object DIGEST`, without driver-side
+source reads. See [range inputs and encoding boundaries](scaling-and-inputs.md).
 
 ## Map: emit typed values under byte keys
 

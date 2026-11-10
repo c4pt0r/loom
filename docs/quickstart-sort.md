@@ -391,8 +391,8 @@ files larger than client memory.
 
 Chunk size is limited to 1–1,000 integers to fit the current Wasm fuel and payload
 limits. Inputs, outputs, and task records remain in PostgreSQL; automatic cleanup
-is not implemented. The reference backend serializes ledger updates within a
-namespace, so this example makes no claim of speedup over local sorting.
+is not implemented. PostgreSQL remains shared storage, so this example makes no
+claim of speedup over local sorting.
 
 Stop the environment while retaining its database volume:
 

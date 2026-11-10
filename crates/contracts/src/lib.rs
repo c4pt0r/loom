@@ -43,6 +43,8 @@ impl<T> ObjectRef<T> {
 pub enum Input {
     Inline(Bytes),
     Object(ObjectRef),
+    /// Exact byte range; applications choose record/encoding boundaries.
+    ObjectSlice(ObjectSlice),
     TaskResult(Id),
     /// Wait for mapper results, then fold only this partition on the worker.
     Shuffle {
@@ -50,6 +52,32 @@ pub enum Input {
         layout: ShuffleLayout,
         partition: u32,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ObjectSlice {
+    pub object: ObjectRef,
+    pub offset: u64,
+    pub length: u64,
+}
+impl ObjectSlice {
+    pub fn validate(&self) -> Result<()> {
+        self.offset
+            .checked_add(self.length)
+            .ok_or_else(|| Error::Invalid("object range overflow".into()))?;
+        Ok(())
+    }
+}
+
+/// Strict half-open range: never truncate silently, including empty ranges beyond EOF.
+pub fn slice_bytes(bytes: &[u8], offset: u64, length: u64) -> Result<Bytes> {
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| Error::Invalid("object range overflow".into()))?;
+    if end > bytes.len() as u64 {
+        return Err(Error::Invalid("object range exceeds length".into()));
+    }
+    Ok(bytes[offset as usize..end as usize].to_vec())
 }
 
 pub const MAX_SHUFFLE_PARTITIONS: u32 = 256;
@@ -334,6 +362,10 @@ pub trait ExecutionStore: Send + Sync {
 pub trait ObjectStore: Send + Sync {
     async fn put(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get(&self, object: &ObjectRef) -> Result<Bytes>;
+    /// Compatibility fallback for existing adapters; providers should override with native range IO.
+    async fn get_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
+        slice_bytes(&self.get(object).await?, offset, length)
+    }
 }
 
 /// Compatibility name for callers of the original prototype API.

@@ -1,5 +1,5 @@
 use loom_guest_sdk::{
-    Guest, Reducer, ShuffleRecord, Task, decode, export, record, run_reducer, run_task,
+    Guest, Reducer, ShuffleRecord, Task, decode, encode, export, record, run_reducer, run_task,
 };
 use std::collections::BTreeMap;
 
@@ -41,6 +41,10 @@ impl Guest for WordCountGuest {
     fn task(name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {
         match name.as_str() {
             "count_words" => run_task::<CountWords>(&input),
+            "count_words_text" => {
+                let text = String::from_utf8(input).map_err(|e| e.to_string())?;
+                encode(&CountWords::run(text)?)
+            }
             "sum_counts" => run_reducer::<SumCounts>(&input),
             _ => Err(format!("unknown task: {name}")),
         }

@@ -1,4 +1,8 @@
-# Verification record
+# Initial verification record
+
+This records the original ledger-based revision. See the
+[current coordination and input verification](scaling-verification.md) for the
+row-oriented PostgreSQL implementation and updated test counts.
 
 The later [Docker Compose run](compose-verification.md) also verifies the release
 build inside Linux containers, container SIGKILL recovery and PostgreSQL volume persistence.

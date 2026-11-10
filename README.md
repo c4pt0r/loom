@@ -10,7 +10,7 @@ machine that fans out analysis, aggregates results, waits for approval, and resu
 after restart.
 
 Examples: [Sorting](#quickstart-distributed-sorting-with-rust-and-loom) ·
-[Word count](#quickstart-distributed-word-count) · [Shuffle protocol](docs/shuffle.md) · [Object storage](docs/object-store.md)
+[Word count](#quickstart-distributed-word-count) · [Shuffle protocol](docs/shuffle.md) · [Object storage](docs/object-store.md) · [Coordination and input slices](docs/scaling-and-inputs.md)
 
 ## Quickstart: distributed sorting with Rust and Loom
 
@@ -405,8 +405,8 @@ files larger than client memory.
 
 Chunk size is limited to 1–1,000 integers to fit the current Wasm fuel and payload
 limits. Inputs, outputs, and task records remain in PostgreSQL; automatic cleanup
-is not implemented. The reference backend serializes ledger updates within a
-namespace, so this example makes no claim of speedup over local sorting.
+is not implemented. PostgreSQL remains shared storage; this example makes no
+claim of speedup over local sorting.
 
 Stop the environment while retaining its database volume:
 
@@ -516,9 +516,11 @@ tasks, so any worker may act as a mapper or reducer. Each mapper reads only its
 assigned input object. Each reducer reads manifests from all mappers, but data
 blocks only for its own partition. No mapper scans the entire original input.
 
-The example driver still reads the complete original text and splits it locally.
-Source-level file/object range splitting is separate from shuffle and is not yet
-implemented. The original text does not need to be read again for Reduce.
+The sample and stdin modes still read the complete text and split it locally.
+For existing objects, `--input-slices slices.json` submits byte-range references
+and `--input-object DIGEST` submits a complete object without driver-side source
+reads. Existing complete-object inputs remain supported. See
+[object slices and encoding boundaries](docs/scaling-and-inputs.md).
 
 ### Map: emit typed values under byte keys
 
@@ -726,8 +728,8 @@ example. Other guests can be compiled with Cargo and packaged with
 
 ## Run two durable nodes
 
-Use a development PostgreSQL database. The adapter creates only `loom_ledgers` and
-`loom_blobs`; namespaces isolate logical clusters. The prototype connects without
+Use a development PostgreSQL database. The adapter creates node, actor, job,
+dependency, object, and schema-metadata tables; namespaces isolate logical clusters. The prototype connects without
 TLS and is intended for a trusted local environment.
 
 ```sh
@@ -790,7 +792,8 @@ See [the Rust guest](examples/research-agent/src/lib.rs),
 
 Task coordination and payload storage are independently injectable. `ControlStore`
 keeps task state, leases, fencing, and membership together. `ObjectStore` holds
-Wasm components, task data, shuffle blocks, and results through `put` / `get`.
+Wasm components, task data, shuffle blocks, and results through `put` / `get`,
+with `get_range` for input slices.
 
 ```rust
 let backend = Stores::new(control, objects);
@@ -849,10 +852,11 @@ Wasmtime host ─── runtime orchestration
 
 ## Explicit prototype limits
 
-The PostgreSQL reference adapter locks one JSON ledger row per namespace. It is a
-correctness baseline, **not a scalable storage design or performance benchmark**.
-Large objects and modules are stored separately as `bytea`; S3 is not implemented.
-All ledger changes serialize, and jobs/receipts/blobs have no retention cleanup.
+The PostgreSQL adapter uses per-job records and `SKIP LOCKED` claims. Unrelated
+jobs can progress concurrently; one actor still processes one turn at a time.
+This is **not a throughput benchmark or a claim of linear scaling**. Large objects
+and modules remain stored as `bytea`; S3 and retention cleanup are not implemented.
+See [coordination migration and range-input limits](docs/scaling-and-inputs.md).
 The memory adapter is intentionally not durable across process exits.
 
 Nodes share work through storage polling, with one execution slot per process.
@@ -887,4 +891,5 @@ the real Rust/Wasm component. It also verifies that a previously committed task 
 not replayed, and that an actor resumes after all its workers were killed while
 waiting for approval. The fixture binary is not part of the production CLI.
 
-See [contract details](docs/contracts.md) and [verification record](docs/verification.md).
+See [contract details](docs/contracts.md), [current coordination and input verification](docs/scaling-verification.md),
+and the [initial verification record](docs/verification.md).

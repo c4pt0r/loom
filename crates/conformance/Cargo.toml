@@ -16,3 +16,5 @@ tokio.workspace = true
 uuid.workspace = true
 loom-shuffle.workspace = true
 loom-object-store-memory.workspace = true
+tokio-postgres.workspace = true
+loom-backend-core.workspace = true

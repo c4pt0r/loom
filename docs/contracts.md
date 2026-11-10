@@ -9,7 +9,7 @@ Loom's `ExecutionStore` owns claim, renewal and commit for that reason.
 
 `create_actor`, `send`, and `submit` are idempotent by ID and exact request content.
 The actor definition (including immutable module digest) cannot silently change.
-IDs are namespace-local, 1–512 bytes. Persisted records use ledger schema version 1.
+IDs are namespace-local, 1–512 bytes. PostgreSQL coordination uses schema version 2, with transactional migration from the original ledger.
 Guest ABI version is `loom:guest@0.1.0`; new ABI/schema versions require explicit migration.
 
 For actor turns, commit includes:
@@ -22,7 +22,7 @@ For actor turns, commit includes:
 
 Any error rolls back every operation. Adapters must not leak early writes if a
 later intent fails validation. In memory this is clone-and-swap under a mutex;
-PostgreSQL uses a locked row and a transaction. A future adapter may use different
+PostgreSQL locks the affected jobs, actors, and node incarnations within one transaction. A future adapter may use different
 tables or a replicated state machine while preserving observable semantics.
 
 For task completion, immutable result publication precedes the transaction. The
@@ -89,3 +89,10 @@ execution metadata in one fencing domain. `Stores::new(control, objects)` compos
 independent providers as the existing `Backend` facade. The CLI defaults both to
 PostgreSQL; Wasm module loading now needs only `ObjectStore`. See
 [object-store.md](object-store.md) for visibility, retention, and injection rules.
+
+## Input object slices
+
+`Input::Object` remains unchanged. `Input::ObjectSlice` adds a strict byte range
+resolved by the worker through `ObjectStore::get_range`. Existing providers inherit
+a complete-read fallback; PostgreSQL implements native range retrieval. See
+[scaling-and-inputs.md](scaling-and-inputs.md) for boundary rules and migration.

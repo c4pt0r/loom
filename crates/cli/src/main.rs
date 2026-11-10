@@ -37,6 +37,10 @@ enum Command {
     Deploy {
         component: PathBuf,
     },
+    /// Upload immutable input data and print its object digest.
+    Put {
+        path: PathBuf,
+    },
     CreateActor {
         id: String,
         module: String,
@@ -147,6 +151,9 @@ async fn main() -> Result<()> {
         }
         Command::Deploy { component } => {
             println!("{}", backend.put(std::fs::read(component)?).await?.digest)
+        }
+        Command::Put { path } => {
+            println!("{}", backend.put(std::fs::read(path)?).await?.digest)
         }
         Command::CreateActor {
             id,

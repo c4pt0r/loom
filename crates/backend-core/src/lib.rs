@@ -7,31 +7,32 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Ledger {
-    nodes: BTreeMap<Id, NodeRecord>,
-    actors: BTreeMap<Id, ActorSnapshot>,
-    jobs: BTreeMap<Id, Job>,
-    seq: u64,
+    pub nodes: BTreeMap<Id, NodeRecord>,
+    pub actors: BTreeMap<Id, ActorSnapshot>,
+    pub jobs: BTreeMap<Id, Job>,
+    pub seq: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Job {
-    seq: u64,
-    kind: Kind,
-    attempts: u32,
-    epoch: u64,
-    owner: Option<NodeSession>,
-    lease_until: Millis,
-    available_at: Millis,
-    receipt: Option<Receipt>,
-    committed: Option<(Fence, Completion)>,
-    failed_epoch: Option<u64>,
+pub struct Job {
+    pub seq: u64,
+    pub kind: Kind,
+    pub attempts: u32,
+    pub epoch: u64,
+    pub owner: Option<NodeSession>,
+    pub lease_until: Millis,
+    pub available_at: Millis,
+    pub receipt: Option<Receipt>,
+    pub committed: Option<(Fence, Completion)>,
+    pub failed_epoch: Option<u64>,
 }
 #[derive(Clone, Serialize, Deserialize)]
-enum Kind {
+pub enum Kind {
     Message(Envelope),
     Task(TaskSpec),
 }
 
+#[derive(Clone)]
 pub enum Op {
     Register(NodeSession, Millis),
     Renew(NodeSession, Millis),
@@ -140,6 +141,7 @@ impl Ledger {
             layout.validate()?;
         }
         match &s.input {
+            Input::ObjectSlice(slice) => slice.validate()?,
             Input::TaskResult(parent) if !self.jobs.contains_key(&task_job(parent)) => {
                 return Err(Error::NotFound(parent.clone()));
             }
@@ -223,7 +225,13 @@ impl Ledger {
         }
         Ok(j)
     }
-    fn claim(&mut self, owner: NodeSession, ttl: Millis, now: Millis) -> Result<Option<Claim>> {
+    fn claim(
+        &mut self,
+        owner: NodeSession,
+        ttl: Millis,
+        now: Millis,
+        selected: Option<&str>,
+    ) -> Result<Option<Claim>> {
         if self.session(&owner, now)?.draining {
             return Ok(None);
         }
@@ -231,7 +239,9 @@ impl Ledger {
         let mut ordered: Vec<_> = self
             .jobs
             .iter()
-            .filter(|(_, j)| j.receipt.is_none())
+            .filter(|(id, j)| {
+                j.receipt.is_none() && selected.is_none_or(|selected| id.as_str() == selected)
+            })
             .map(|(id, j)| (j.seq, id.clone()))
             .collect();
         ordered.sort();
@@ -361,6 +371,16 @@ impl Ledger {
         }
         Ok(None)
     }
+    /// Apply a row-locked candidate without accidentally claiming its loaded dependencies.
+    pub fn claim_one(
+        &mut self,
+        id: &str,
+        owner: NodeSession,
+        ttl: Millis,
+        now: Millis,
+    ) -> Result<Answer> {
+        self.claim(owner, ttl, now, Some(id)).map(Answer::Claim)
+    }
     pub fn apply(&mut self, op: Op, now: Millis) -> Result<Answer> {
         match op {
             Op::Register(session, ttl) => {
@@ -451,7 +471,7 @@ impl Ledger {
                     outcome,
                 }));
             }
-            Op::Claim(s, ttl) => return self.claim(s, ttl, now).map(Answer::Claim),
+            Op::Claim(s, ttl) => return self.claim(s, ttl, now, None).map(Answer::Claim),
             Op::Extend(c, ttl) => {
                 self.check_fence(&c, now)?;
                 self.jobs.get_mut(&c.fence.job).unwrap().lease_until = deadline(now, ttl)?;
@@ -579,6 +599,9 @@ pub trait Driver: Send + Sync {
     async fn transact(&self, op: Op) -> Result<Answer>;
     async fn put_blob(&self, bytes: Bytes) -> Result<ObjectRef>;
     async fn get_blob(&self, object: &ObjectRef) -> Result<Bytes>;
+    async fn get_blob_range(&self, object: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
+        slice_bytes(&self.get_blob(object).await?, offset, length)
+    }
 }
 pub struct Store<D>(pub D);
 
@@ -663,5 +686,8 @@ impl<D: Driver> ObjectStore for Store<D> {
     }
     async fn get(&self, r: &ObjectRef) -> Result<Bytes> {
         self.0.get_blob(r).await
+    }
+    async fn get_range(&self, r: &ObjectRef, offset: u64, length: u64) -> Result<Bytes> {
+        self.0.get_blob_range(r, offset, length).await
     }
 }

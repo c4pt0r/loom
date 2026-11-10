@@ -27,6 +27,24 @@ impl Node {
                         let input = match other {
                             Input::Inline(bytes) => bytes.clone(),
                             Input::Object(r) => self.store.get(r).await?,
+                            Input::ObjectSlice(slice) => {
+                                slice.validate()?;
+                                if slice.length > loom_shuffle::MAX_PAYLOAD_BYTES as u64 {
+                                    return Err(Error::Invalid(
+                                        "task input slice exceeds 4 MiB".into(),
+                                    ));
+                                }
+                                let bytes = self
+                                    .store
+                                    .get_range(&slice.object, slice.offset, slice.length)
+                                    .await?;
+                                if bytes.len() as u64 != slice.length {
+                                    return Err(Error::Invalid(
+                                        "object provider returned an incomplete range".into(),
+                                    ));
+                                }
+                                bytes
+                            }
                             _ => return Err(Error::Invalid("unresolved task dependency".into())),
                         };
                         self.engine

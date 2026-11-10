@@ -783,6 +783,7 @@ dependencies = [
  "async-trait",
  "loom-backend-core",
  "loom-contracts",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
@@ -811,6 +812,7 @@ name = "loom-conformance"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "loom-backend-core",
  "loom-backend-memory",
  "loom-backend-postgres",
  "loom-contracts",
@@ -820,6 +822,7 @@ dependencies = [
  "loom-wasm-host",
  "serde_json",
  "tokio",
+ "tokio-postgres",
  "uuid",
 ]
 
