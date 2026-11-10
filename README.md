@@ -10,7 +10,16 @@ machine that fans out analysis, aggregates results, waits for approval, and resu
 after restart.
 
 Examples: [Sorting](#quickstart-distributed-sorting-with-rust-and-loom) ·
-[Word count](#quickstart-distributed-word-count) · [Shuffle protocol](docs/shuffle.md) · [Object storage](docs/object-store.md) · [Coordination and input slices](docs/scaling-and-inputs.md)
+[Word count](#quickstart-distributed-word-count) · [Local Pi book summaries](examples/book-summary/README.md) · [Shuffle protocol](docs/shuffle.md) · [Object storage](docs/object-store.md) · [Coordination and input slices](docs/scaling-and-inputs.md)
+
+## Local Pi: parallel chapter summaries
+
+The [book-summary example](examples/book-summary/README.md) uses a durable Actor
+and bounded parallel Tasks to summarize chapters with your **locally installed Pi
+coding agent**, then synthesize a final report. Its Rust worker runs natively on
+your host; an isolated Docker Compose stack supplies PostgreSQL. The guide covers
+setup, code, object/slice inputs, and recovery. This example installs a native
+execution engine; its coordinator and Pi tasks are not Wasm components.
 
 ## Quickstart: distributed sorting with Rust and Loom
 

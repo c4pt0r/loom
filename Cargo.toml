@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "examples/research-agent", "examples/sort-guest", "examples/sort-client", "examples/word-count", "examples/word-count-tasks"]
+members = ["crates/*", "examples/research-agent", "examples/sort-guest", "examples/sort-client", "examples/word-count", "examples/word-count-tasks", "examples/book-summary"]
 default-members = ["crates/cli", "crates/conformance"]
 
 [workspace.package]
